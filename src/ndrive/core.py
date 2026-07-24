@@ -294,6 +294,7 @@ def _forget(rel: str) -> None:
     with db() as con:
         con.execute("DELETE FROM likes WHERE path=?", (rel,))
         con.execute("DELETE FROM photos WHERE path=?", (rel,))
+        con.execute("UPDATE photos SET dup_of=NULL WHERE dup_of=?", (rel,))
 
 
 # --- trash -----------------------------------------------------------------
@@ -309,6 +310,7 @@ def move_to_trash(rel: str) -> None:
     with db() as con:
         for table in ("likes", "photos"):
             con.execute(f"DELETE FROM {table} WHERE path=? OR path LIKE ?", (rel, rel + "/%"))
+        con.execute("UPDATE photos SET dup_of=NULL WHERE dup_of=? OR dup_of LIKE ?", (rel, rel + "/%"))
 
 
 def purge_trash(days: int = 30) -> int:
@@ -331,6 +333,7 @@ def rename_paths(old: str, new: str) -> None:
                 con.execute(f"DELETE FROM {table} WHERE path=?", (np,))  # MOVE with Overwrite
             con.execute("UPDATE photos SET path=?, owner=? WHERE path=?", (np, np.split("/")[0], r["path"]))
             con.execute("UPDATE likes SET path=? WHERE path=?", (np, r["path"]))
+            con.execute("UPDATE photos SET dup_of=? WHERE dup_of=?", (np, r["path"]))
 
 
 # --- likes & listing -------------------------------------------------------
@@ -363,6 +366,14 @@ def list_photos(me: str, owner: str | None = None, sort: str = "desc") -> list[d
     for r in rows:
         r["video"] = Path(r["path"]).suffix.lower() in VIDEO_EXTS
     return rows
+
+
+def duplicate_pairs() -> list[tuple[dict, dict]]:
+    """Every flagged near-duplicate joined with its partner, for the side-by-side review page."""
+    with db() as con:
+        rows = [dict(r) for r in con.execute("SELECT * FROM photos ORDER BY taken_at DESC, path DESC")]
+    by_path = {r["path"]: r for r in rows}
+    return [(r, by_path[r["dup_of"]]) for r in rows if r["dup_of"] in by_path]
 
 
 # --- renditions ------------------------------------------------------------

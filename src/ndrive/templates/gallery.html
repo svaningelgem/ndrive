@@ -52,6 +52,7 @@ dialog a { color: #4a9eff; }
     {% for o in owners %}<option value="{{ o }}" {{ 'selected' if o == owner }}>{{ o }}</option>{% endfor %}
   </select>
   <button onclick="toggleSort()">date {{ '↑' if sort == 'asc' else '↓' }}</button>
+  {% if dup_count %}<a class="btn" href="/duplicates" style="text-decoration:none">🔁 {{ dup_count }} dup{{ 's' if dup_count > 1 }}</a>{% endif %}
   <span class="grow"></span>
   <span id="selinfo"></span>
   <button id="dl" disabled onclick="downloadSel()">download zip</button>
@@ -69,6 +70,7 @@ dialog a { color: #4a9eff; }
   <li onclick="ctxDo(newFolder)">📁 create folder</li>
   <li onclick="ctxDo(toggleSort)">🕒 sort by date</li>
   <li onclick="ctxDo(sortByPerson)">👤 sort by person</li>
+  <li onclick="ctxDo(() => location = '/duplicates')">🔁 review duplicates</li>
 </menu>
 
 <div class="grid">

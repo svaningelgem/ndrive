@@ -179,9 +179,14 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 "owner": owner or "",
                 "sort": sort,
                 "my_folders": core.subfolders(user),
+                "dup_count": len(core.duplicate_pairs()),
                 "paths_json": json.dumps([p["path"] for p in photos]),
             },
         )
+
+    @app.get("/duplicates", response_class=HTMLResponse)
+    def duplicates(request: Request, user: str = Depends(current_user)):
+        return templates.TemplateResponse(request, "dups.html", {"user": user, "pairs": core.duplicate_pairs()})
 
     @app.get("/thumb/{rel:path}")
     def thumb(rel: str, user: str = Depends(current_user)):

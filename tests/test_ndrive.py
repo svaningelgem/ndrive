@@ -92,6 +92,25 @@ def test_duplicate_warning(client: TestClient) -> None:
         assert con.execute("SELECT dup_of FROM photos WHERE path='alice/b.jpg'").fetchone()[0] == "alice/a.jpg"
 
 
+def test_duplicates_review_page(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", gradient_jpeg((128, 96)), "image/jpeg"))])
+    client.post("/api/upload", auth=ALICE, files=[("files", ("b.jpg", gradient_jpeg((100, 75)), "image/jpeg"))])
+    assert len(core.duplicate_pairs()) == 1
+
+    html = client.get("/duplicates", auth=BOB).text
+    assert "alice/a.jpg" in html
+    assert "alice/b.jpg" in html
+    assert "not yours" in html  # bob cannot delete alice's pictures here
+    assert "delete this one" not in html
+    assert "delete this one" in client.get("/duplicates", auth=ALICE).text
+
+    # deleting the flagged copy's *partner* clears the dangling dup_of flag
+    client.post("/api/delete", auth=ALICE, json={"paths": ["alice/a.jpg"]})
+    assert core.duplicate_pairs() == []
+    with core.db() as con:
+        assert con.execute("SELECT dup_of FROM photos WHERE path='alice/b.jpg'").fetchone()[0] is None
+
+
 def test_distinct_photos_no_warning(client: TestClient) -> None:
     r1 = client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", gradient_jpeg((128, 96)), "image/jpeg"))])
     r2 = client.post("/api/upload", auth=BOB, files=[("files", ("b.jpg", mandel_jpeg(), "image/jpeg"))])

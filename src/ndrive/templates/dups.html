@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ndrive — duplicates</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #14161a; color: #e8e8e8; font: 15px/1.4 system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; gap: 1rem; align-items: center;
+         padding: .6rem 1rem; background: #1c1f26; box-shadow: 0 1px 4px #0008; }
+header h1 { font-size: 1.1rem; margin: 0; }
+header a { color: #4a9eff; text-decoration: none; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; border-bottom: 1px solid #2a2e37; }
+@media (max-width: 700px) { .pair { grid-template-columns: 1fr; } }
+.pane { margin: 0; }
+.pane img { width: 100%; max-height: 70vh; object-fit: contain; background: #000; border-radius: 8px; }
+.meta { display: flex; gap: .9rem; flex-wrap: wrap; align-items: center; padding: .35rem .2rem;
+        font-size: .85rem; color: #9aa0ab; }
+.meta .path { color: #e8e8e8; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; white-space: nowrap; }
+button.del { background: #3a1d22; color: #ff8899; border: 1px solid #71333f; border-radius: 6px;
+             padding: .3rem .7rem; font: inherit; cursor: pointer; margin-left: auto; }
+.notyours { margin-left: auto; font-style: italic; }
+.empty { text-align: center; color: #9aa0ab; margin-top: 3rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔁 possible duplicates ({{ pairs | length }})</h1>
+  <a href="/">← back to gallery</a>
+</header>
+
+{% for a, b in pairs %}
+<div class="pair">
+  {% for p in (a, b) %}
+  <figure class="pane">
+    <a href="/media/{{ p['path'] | q }}" target="_blank" title="open original">
+      <img loading="lazy" src="/view/{{ p['path'] | q }}" alt="{{ p['path'] }}">
+    </a>
+    <figcaption class="meta">
+      <span class="path" title="{{ p['path'] }}">{{ p['path'] }}</span>
+      <span>👤 {{ p['owner'] }}</span>
+      <span>🕒 {{ p['taken_at'] }}</span>
+      {% if p['width'] %}<span>{{ p['width'] }}×{{ p['height'] }}</span>{% endif %}
+      <span>{{ '%.1f' | format(p['size'] / 1048576) }} MB</span>
+      {% if p['owner'] == user %}
+      <button class="del" data-path="{{ p['path'] }}" onclick="del(this)">🗑 delete this one</button>
+      {% else %}<span class="notyours">not yours</span>{% endif %}
+    </figcaption>
+  </figure>
+  {% endfor %}
+</div>
+{% endfor %}
+{% if not pairs %}<p class="empty">No duplicates flagged 🎉</p>{% endif %}
+
+<script>
+async function del(btn) {
+  const path = btn.dataset.path;
+  if (!confirm('Move to trash:\n' + path + ' ?')) return;
+  const r = await fetch('/api/delete', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify({paths: [path]})});
+  const d = await r.json();
+  if (d.deleted) btn.closest('.pair').remove(); else alert(d.message);
+}
+</script>
+</body>
+</html>
