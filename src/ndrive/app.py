@@ -180,11 +180,11 @@ def create_app(home: str | Path | None = None) -> FastAPI:
 
     @app.get("/thumb/{rel:path}")
     def thumb(rel: str, user: str = Depends(current_user)):
-        return FileResponse(core.rendition(rel, 400))
+        return FileResponse(core.rendition(rel, core.THUMB_SIDE))
 
     @app.get("/view/{rel:path}")
     def view(rel: str, user: str = Depends(current_user)):
-        return FileResponse(core.rendition(rel, 2048))
+        return FileResponse(core.rendition(rel, core.VIEW_SIDE))
 
     @app.get("/media/{rel:path}")
     def media(rel: str, user: str = Depends(current_user)):

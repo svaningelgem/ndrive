@@ -12,6 +12,7 @@ import logging
 import os
 import shutil
 import sqlite3
+import subprocess
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -25,8 +26,11 @@ register_heif_opener()
 log = logging.getLogger("ndrive")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
+HEIC_EXTS = {".heic", ".heif"}
 PHASH_DUP_DISTANCE = 6  # hamming distance on the 64-bit phash; bursts may trip this — we warn, never block
-EXIF_DT_ORIGINAL, EXIF_DT, EXIF_IFD = 36867, 306, 0x8769
+EXIF_DT_ORIGINAL, EXIF_DT, EXIF_DT_DIGITIZED, EXIF_IFD = 36867, 306, 36868, 0x8769
+THUMB_SIDE = 320  # ≤ the preview embedded in HEICs, so gallery thumbs never need a full decode
+VIEW_SIDE = 2048
 
 HOME: Path = Path()
 DATA: Path = Path()
@@ -118,7 +122,14 @@ def resolve(rel: str) -> Path:
 
 def _taken_at(img: Image.Image, mtime: float) -> str:
     exif = img.getexif()
-    raw = exif.get_ifd(EXIF_IFD).get(EXIF_DT_ORIGINAL) or exif.get(EXIF_DT_ORIGINAL) or exif.get(EXIF_DT)
+    ifd = exif.get_ifd(EXIF_IFD)
+    raw = (
+        ifd.get(EXIF_DT_ORIGINAL)
+        or exif.get(EXIF_DT_ORIGINAL)
+        or exif.get(EXIF_DT)
+        or ifd.get(EXIF_DT_DIGITIZED)
+        or exif.get(EXIF_DT_DIGITIZED)
+    )
     if raw:
         try:
             return datetime.strptime(str(raw), "%Y:%m:%d %H:%M:%S").isoformat(sep=" ")
@@ -279,12 +290,37 @@ def rendition(rel: str, max_side: int) -> Path:
     abs_ = resolve(rel)
     key = hashlib.sha1(f"{rel}:{abs_.stat().st_mtime}:{max_side}".encode()).hexdigest()
     out = CACHE / "img" / f"{key}.jpg"
-    if not out.exists():
+    if not out.exists() and not _heic_fast_thumb(abs_, out, max_side):
         with Image.open(abs_) as img:
             img = ImageOps.exif_transpose(img)
             img.thumbnail((max_side, max_side))
             img.convert("RGB").save(out, "JPEG", quality=85)
     return out
+
+
+def _heic_fast_thumb(src: Path, out: Path, max_side: int) -> bool:
+    """heif-thumbnailer extracts the preview embedded in a HEIC instead of decoding the full image.
+
+    Ported from the papa_fotos gallery; only valid up to the embedded preview's size (~320px).
+    Falls back to a full Pillow decode when the tool is missing or the file has no usable preview.
+    """
+    if src.suffix.lower() not in HEIC_EXTS or max_side > THUMB_SIDE:
+        return False
+    tmp = out.with_suffix(".tmp.png")  # heif-thumbnailer picks its output format from the extension
+    try:
+        subprocess.run(
+            ["heif-thumbnailer", "-s", str(max_side), str(src), str(tmp)],
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        with Image.open(tmp) as img:
+            img.convert("RGB").save(out, "JPEG", quality=85)
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def unique_dest(owner: str, filename: str) -> str:

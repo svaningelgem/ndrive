@@ -147,3 +147,32 @@ def test_webdav_move_updates_index(client: TestClient) -> None:
         "MOVE", "/dav/alice/z.jpg", auth=ALICE, headers={"Destination": "http://testserver/dav/bob/z.jpg"}
     )
     assert r.status_code == 403  # cross-owner move refused
+
+
+def test_taken_at_digitized_fallback(client: TestClient) -> None:
+    img = Image.new("RGB", (32, 32), (7, 7, 7))
+    exif = Image.Exif()
+    exif[36868] = "2026:07:02 09:30:00"  # DateTimeDigitized only
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", exif=exif)
+    (core.DATA / "alice/d.jpg").write_bytes(buf.getvalue())
+    core.index_file("alice/d.jpg")
+    with core.db() as con:
+        assert (
+            con.execute("SELECT taken_at FROM photos WHERE path='alice/d.jpg'").fetchone()[0] == "2026-07-02 09:30:00"
+        )
+
+
+def test_heic_rendition(client: TestClient) -> None:
+    path = core.DATA / "alice/h.heic"
+    try:
+        Image.effect_mandelbrot((640, 480), (-2.0, -1.5, 1.0, 1.5), 40).convert("RGB").save(path)
+    except Exception:  # noqa: BLE001 — libheif built without an HEVC encoder
+        pytest.skip("no HEIC encoder available")
+    core.index_file("alice/h.heic")
+    with core.db() as con:
+        assert con.execute("SELECT phash FROM photos WHERE path='alice/h.heic'").fetchone()[0]
+    out = core.rendition("alice/h.heic", core.THUMB_SIDE)
+    with Image.open(out) as thumb:
+        assert thumb.format == "JPEG"
+        assert max(thumb.size) <= core.THUMB_SIDE
