@@ -117,12 +117,11 @@ def test_duplicates_review_page(client: TestClient) -> None:
     client.post("/api/upload", auth=ALICE, files=[("files", ("b.jpg", gradient_jpeg((100, 75)), "image/jpeg"))])
     assert len(core.duplicate_pairs()) == 1
 
-    html = client.get("/duplicates", auth=BOB).text
+    html = client.get("/duplicates", auth=ALICE).text
     assert "alice/a.jpg" in html
     assert "alice/b.jpg" in html
-    assert "not yours" in html  # bob cannot delete alice's pictures here
-    assert "delete this one" not in html
-    assert "delete this one" in client.get("/duplicates", auth=ALICE).text
+    assert "delete this one" in html
+    assert "alice/a.jpg" not in client.get("/duplicates", auth=BOB).text  # pairs you can't resolve aren't shown
 
     # deleting the flagged copy's *partner* clears the dangling dup_of flag
     client.post("/api/delete", auth=ALICE, json={"paths": ["alice/a.jpg"]})
@@ -147,7 +146,8 @@ def test_keep_both_is_for_involved_owners_only(client: TestClient) -> None:
     client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", gradient_jpeg((128, 96)), "image/jpeg"))])
     client.post("/api/upload", auth=ALICE, files=[("files", ("b.jpg", gradient_jpeg((100, 75)), "image/jpeg"))])
     assert client.post("/api/keep-both", auth=BOB, json={"path": "alice/b.jpg"}).status_code == 403
-    assert "can decide this pair" in client.get("/duplicates", auth=BOB).text
+    assert core.duplicate_pairs("bob") == []  # not bob's to see
+    assert len(core.duplicate_pairs("alice")) == 1
     assert len(core.duplicate_pairs()) == 1  # untouched
     assert client.post("/api/keep-both", auth=ALICE, json={"path": "alice/b.jpg"}).status_code == 200
     assert core.duplicate_pairs() == []

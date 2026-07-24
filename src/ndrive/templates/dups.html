@@ -22,7 +22,6 @@ header a { color: #4a9eff; text-decoration: none; }
 button.del { background: #3a1d22; color: #ff8899; border: 1px solid #71333f; border-radius: 6px;
              padding: .3rem .7rem; font: inherit; cursor: pointer; margin-left: auto; }
 .keep { grid-column: 1 / -1; text-align: center; }
-.keep .notyours { margin-left: 0; font-size: .85rem; color: #9aa0ab; }
 .keep button { background: #1d3a24; color: #7fd191; border: 1px solid #2f6b3f; border-radius: 6px;
                padding: .35rem .9rem; font: inherit; cursor: pointer; }
 .notyours { margin-left: auto; font-style: italic; }
@@ -55,11 +54,7 @@ button.del { background: #3a1d22; color: #ff8899; border: 1px solid #71333f; bor
   </figure>
   {% endfor %}
   <div class="keep">
-    {% if user in (a['owner'], b['owner']) %}
     <button data-path="{{ a['path'] }}" onclick="keepBoth(this)">🤝 keep both — these are not duplicates</button>
-    {% else %}
-    <span class="notyours">only {{ (a['owner'], b['owner']) | unique | join(' / ') }} can decide this pair</span>
-    {% endif %}
   </div>
 </div>
 {% endfor %}

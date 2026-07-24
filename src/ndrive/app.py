@@ -194,7 +194,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 "sort": sort,
                 "liked": liked,
                 "my_folders": core.subfolders(user),
-                "dup_count": len(core.duplicate_pairs()),
+                "dup_count": len(core.duplicate_pairs(user)),
                 "people": faces.people(),
                 "person": person or "",
                 "unlabeled_count": faces.unlabeled_count(),
@@ -204,7 +204,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
 
     @app.get("/duplicates", response_class=HTMLResponse)
     def duplicates(request: Request, user: str = Depends(current_user)):
-        return templates.TemplateResponse(request, "dups.html", {"user": user, "pairs": core.duplicate_pairs()})
+        return templates.TemplateResponse(request, "dups.html", {"user": user, "pairs": core.duplicate_pairs(user)})
 
     @app.get("/faces", response_class=HTMLResponse)
     def faces_page(request: Request, user: str = Depends(current_user)):

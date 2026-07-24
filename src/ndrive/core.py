@@ -526,12 +526,15 @@ def list_photos(
     return rows
 
 
-def duplicate_pairs() -> list[tuple[dict, dict]]:
-    """Every flagged near-duplicate joined with its partner, for the side-by-side review page."""
+def duplicate_pairs(user: str | None = None) -> list[tuple[dict, dict]]:
+    """Flagged near-duplicates with their partner; scoped to pairs `user` can resolve when given."""
     with db() as con:
         rows = [dict(r) for r in con.execute("SELECT * FROM photos ORDER BY taken_at DESC, path DESC")]
     by_path = {r["path"]: r for r in rows}
-    return [(r, by_path[r["dup_of"]]) for r in rows if r["dup_of"] in by_path]
+    pairs = [(r, by_path[r["dup_of"]]) for r in rows if r["dup_of"] in by_path]
+    if user:
+        pairs = [(a, b) for a, b in pairs if user in (a["owner"], b["owner"])]
+    return pairs
 
 
 # --- renditions ------------------------------------------------------------
