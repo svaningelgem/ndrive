@@ -69,6 +69,25 @@ def test_can_write(user: str, path: str, ok: bool) -> None:
     assert core.can_write(user, path) is ok
 
 
+def test_case_insensitive_login(client: TestClient) -> None:
+    assert core.verify_user("ALICE", "pw-alice") == "alice"  # canonical case comes back
+    assert core.verify_user("Alice", "wrong") is None
+    with pytest.raises(ValueError, match="case-insensitive"):
+        core.add_user("ALICE", "whatever")
+
+    r = client.post(
+        "/api/upload", auth=("ALICE", "pw-alice"), files=[("files", ("c.jpg", jpeg_bytes((11, 12, 13)), "image/jpeg"))]
+    )
+    assert r.status_code == 200
+    with core.db() as con:  # landed in the canonical folder
+        assert con.execute("SELECT COUNT(*) FROM photos WHERE path='alice/c.jpg'").fetchone()[0] == 1
+    assert client.put("/dav/alice/d.jpg", auth=("aLiCe", "pw-alice"), content=jpeg_bytes((14, 15, 16))).status_code in (
+        200,
+        201,
+        204,
+    )
+
+
 def test_upload_gallery_and_exif_date(client: TestClient) -> None:
     r = client.post(
         "/api/upload",
