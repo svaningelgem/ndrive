@@ -143,6 +143,16 @@ def test_keep_both_resolves_pair(client: TestClient) -> None:
         assert con.execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 2
 
 
+def test_keep_both_is_for_involved_owners_only(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", gradient_jpeg((128, 96)), "image/jpeg"))])
+    client.post("/api/upload", auth=ALICE, files=[("files", ("b.jpg", gradient_jpeg((100, 75)), "image/jpeg"))])
+    assert client.post("/api/keep-both", auth=BOB, json={"path": "alice/b.jpg"}).status_code == 403
+    assert "can decide this pair" in client.get("/duplicates", auth=BOB).text
+    assert len(core.duplicate_pairs()) == 1  # untouched
+    assert client.post("/api/keep-both", auth=ALICE, json={"path": "alice/b.jpg"}).status_code == 200
+    assert core.duplicate_pairs() == []
+
+
 def test_liked_filter(client: TestClient) -> None:
     client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((1, 2, 3)), "image/jpeg"))])
     client.post("/api/upload", auth=ALICE, files=[("files", ("b.jpg", jpeg_bytes((4, 5, 6)), "image/jpeg"))])

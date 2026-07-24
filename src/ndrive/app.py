@@ -301,6 +301,8 @@ def create_app(home: str | Path | None = None) -> FastAPI:
 
     @app.post("/api/keep-both")
     def keep_both(payload: LikePayload, user: str = Depends(current_user)):
+        if user not in core.pair_owners(payload.path):
+            raise HTTPException(403, "Only the owners involved can resolve this pair")
         core.clear_dup(payload.path)
         return {"ok": True}
 

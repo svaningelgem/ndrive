@@ -484,6 +484,16 @@ def clear_dup(rel: str) -> None:
         con.execute("UPDATE photos SET dup_of=NULL WHERE path=?", (rel,))
 
 
+def pair_owners(rel: str) -> set[str]:
+    """The owners involved in a duplicate pair — the only people allowed to resolve it."""
+    with db() as con:
+        row = con.execute(
+            "SELECT p.owner AS a, q.owner AS b FROM photos p LEFT JOIN photos q ON q.path = p.dup_of WHERE p.path=?",
+            (rel,),
+        ).fetchone()
+    return {v for v in (row["a"], row["b"]) if v} if row else set()
+
+
 def list_photos(
     me: str,
     owner: str | None = None,
