@@ -95,7 +95,7 @@ dialog a { color: #4a9eff; }
   <figure class="card" data-path="{{ p['path'] }}">
     <img loading="lazy" src="/thumb/{{ p['path'] | q }}" alt="{{ p['path'] }}"
          onclick="openLb({{ loop.index0 }})" onerror="this.closest('.card').classList.add('broken')">
-    <input type="checkbox" class="sel" onchange="toggleSel(this)">
+    <input type="checkbox" class="sel" autocomplete="off" onchange="toggleSel(this)">
     {% if p['video'] %}<span class="play">▶</span>{% endif %}
     {% if p['dup_of'] %}<span class="dup" title="possible duplicate of {{ p['dup_of'] }}">dup?</span>{% endif %}
     <figcaption>
@@ -302,6 +302,14 @@ addEventListener('keydown', e => {
   if (!lb.open) return;
   if (e.key === 'ArrowRight' && lbIndex < paths.length - 1) openLb(lbIndex + 1);
   if (e.key === 'ArrowLeft' && lbIndex > 0) openLb(lbIndex - 1);
+});
+addEventListener('pageshow', () => {
+  // browsers restore checkbox state across reloads by POSITION — after a delete it lands on the wrong card
+  sel.clear();
+  for (const b of document.querySelectorAll('.sel')) b.checked = false;
+  for (const c of document.querySelectorAll('.card.selected')) c.classList.remove('selected');
+  document.getElementById('selinfo').textContent = '';
+  for (const id of ['dl', 'del']) document.getElementById(id).disabled = true;
 });
 </script>
 </body>
