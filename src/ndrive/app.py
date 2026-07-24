@@ -247,6 +247,13 @@ def create_app(home: str | Path | None = None) -> FastAPI:
             raise HTTPException(404)
         return FileResponse(abs_, filename=abs_.name)
 
+    @app.get("/stream/{rel:path}")
+    def stream(rel: str, user: str = Depends(current_user)):
+        src = core.stream_source(rel)
+        if not src.is_file():
+            raise HTTPException(404)
+        return FileResponse(src, media_type="video/mp4" if src.suffix == ".mp4" else None)
+
     @app.post("/api/mkdir")
     def mkdir(payload: MkdirPayload, user: str = Depends(current_user)):
         folder = payload.folder.strip().strip("/")
@@ -308,6 +315,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
     def _startup_scan():
         core.scan_all()
         faces.scan_faces()
+        core.transcode_all()
 
     threading.Thread(target=_startup_scan, daemon=True, name="ndrive-scan").start()
     return app

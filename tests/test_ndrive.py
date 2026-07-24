@@ -305,6 +305,49 @@ def test_video_indexing_and_playback(client: TestClient) -> None:
     assert r.status_code == 206  # partial content — video seeking works
 
 
+def test_video_stream_rendition(client: TestClient) -> None:
+    if not shutil.which("ffmpeg"):
+        pytest.skip("no ffmpeg available")
+    # mpeg4 codec → outside the stream-as-is envelope → must get an h264 web rendition
+    path = core.DATA / "alice/old.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=64x48:rate=10",
+            "-c:v",
+            "mpeg4",
+            "-y",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    core.index_file("alice/old.mp4")
+    core._locked_transcode("alice/old.mp4")
+    src = core.stream_source("alice/old.mp4")
+    assert src != core.resolve("alice/old.mp4")  # the rendition, not the original
+    probe = core._ffprobe(src)
+    assert probe["streams"][0]["codec_name"] == "h264"
+    r = client.get("/stream/alice/old.mp4", auth=BOB, headers={"Range": "bytes=0-99"})
+    assert r.status_code == 206
+
+    # small h264 clip is already fine → original streams untouched
+    path2 = core.DATA / "alice/ok.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=duration=1:size=64x48:rate=10", "-y", str(path2)],
+        check=True,
+        capture_output=True,
+    )
+    core.index_file("alice/ok.mp4")
+    core._locked_transcode("alice/ok.mp4")
+    assert core.stream_source("alice/ok.mp4") == core.resolve("alice/ok.mp4")
+
+
 def test_heic_rendition(client: TestClient) -> None:
     path = core.DATA / "alice/h.heic"
     try:

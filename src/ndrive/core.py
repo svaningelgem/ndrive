@@ -14,6 +14,7 @@ import os
 import shutil
 import sqlite3
 import subprocess
+import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -33,6 +34,8 @@ PHASH_DUP_DISTANCE = 6  # hamming distance on the 64-bit phash; bursts may trip 
 EXIF_DT_ORIGINAL, EXIF_DT, EXIF_DT_DIGITIZED, EXIF_IFD = 36867, 306, 36868, 0x8769
 THUMB_SIDE = 320
 VIEW_SIDE = 2048
+STREAM_MAX_HEIGHT = 1080  # originals within these bounds stream as-is; anything bigger gets a web rendition
+STREAM_MAX_BITRATE = 8_000_000
 
 HOME: Path = Path()
 DATA: Path = Path()
@@ -60,7 +63,7 @@ def configure(home: str | Path) -> None:
     HOME = Path(home).resolve()
     DATA, CACHE, TRASH = HOME / "data", HOME / "cache", HOME / "trash"
     _DB = CACHE / "ndrive.db"
-    for d in (DATA, CACHE / "img", TRASH):
+    for d in (DATA, CACHE / "img", CACHE / "vid", TRASH):
         d.mkdir(parents=True, exist_ok=True)
     with db() as con:
         con.executescript(_SCHEMA)
@@ -221,6 +224,8 @@ def index_file(rel: str) -> list[str]:
                 dups[0] if dups else None,
             ),
         )
+    if ext in VIDEO_EXTS:
+        transcode_async(rel)
     return dups
 
 
@@ -253,6 +258,96 @@ def _video_dims(meta: dict) -> tuple[int | None, int | None]:
         if stream.get("codec_type") == "video":
             return stream.get("width"), stream.get("height")
     return None, None
+
+
+_transcode_lock = threading.Lock()  # ponytail: one ffmpeg at a time — this box also runs the family's mail
+
+
+def _video_rendition_path(rel: str, mtime: float) -> Path:
+    key = hashlib.sha1(f"{rel}:{mtime}:stream".encode()).hexdigest()
+    return CACHE / "vid" / f"{key}.mp4"
+
+
+def stream_source(rel: str) -> Path:
+    """What the lightbox should play: the web rendition when it exists, else the original."""
+    abs_ = resolve(rel)
+    if abs_.suffix.lower() in VIDEO_EXTS:
+        rendition = _video_rendition_path(rel, abs_.stat().st_mtime)
+        if rendition.exists():
+            return rendition
+    return abs_
+
+
+def transcode_async(rel: str) -> None:
+    threading.Thread(target=_locked_transcode, args=(rel,), daemon=True, name="ndrive-transcode").start()
+
+
+def _locked_transcode(rel: str) -> None:
+    with _transcode_lock:
+        try:
+            _maybe_transcode(rel)
+        except Exception as exc:  # noqa: BLE001 — a broken clip must not stop the sweep
+            log.warning(f"transcode failed for {rel}: {exc}")
+
+
+def _maybe_transcode(rel: str) -> None:
+    """Phone originals (4K/HEVC, 50-100 Mbit) choke browsers and home downlinks; YouTube-grade
+    streaming needs a 1080p H.264 rendition. Originals that already fit stream untouched."""
+    abs_ = resolve(rel)
+    if not abs_.is_file():
+        return
+    out = _video_rendition_path(rel, abs_.stat().st_mtime)
+    if out.exists():
+        return
+    meta = _ffprobe(abs_)
+    stream = next((s for s in meta.get("streams", []) if s.get("codec_type") == "video"), {})
+    bitrate = int(meta.get("format", {}).get("bit_rate") or 0)
+    if (
+        stream.get("codec_name") == "h264"
+        and (stream.get("height") or 0) <= STREAM_MAX_HEIGHT
+        and 0 < bitrate <= STREAM_MAX_BITRATE
+    ):
+        return
+    log.info(f"transcoding {rel} for streaming")
+    tmp = out.parent / (out.stem + ".part.mp4")
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(abs_),
+            "-vf",
+            "scale=1920:1920:force_original_aspect_ratio=decrease:force_divisible_by=2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-y",
+            str(tmp),
+        ],
+        capture_output=True,
+        check=True,
+        timeout=7200,
+    )
+    tmp.rename(out)  # atomic: never serve a half-written rendition
+
+
+def transcode_all() -> None:
+    """Catch-up sweep for videos without a streaming rendition (new uploads enqueue themselves)."""
+    with db() as con:
+        rels = [r["path"] for r in con.execute("SELECT path FROM photos ORDER BY path")]
+    for rel in rels:
+        if Path(rel).suffix.lower() in VIDEO_EXTS:
+            _locked_transcode(rel)
 
 
 def _grab_frame(src: Path, out: Path, max_side: int) -> None:

@@ -236,7 +236,7 @@ function openLb(i) {
   vid.hidden = !isVid;
   if (isVid) {
     img.removeAttribute('src');
-    vid.src = '/media/' + q(path);
+    vid.src = '/stream/' + q(path);
   } else {
     vid.pause();
     vid.removeAttribute('src');
