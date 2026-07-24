@@ -21,6 +21,7 @@ except ImportError:  # dev/test boxes without the ML stack — labeling UI still
 log = logging.getLogger("ndrive")
 
 IGNORE = "(not a face)"
+STRANGER = "(stranger)"  # real face, unknown person: archived, but never suggested or filterable
 SUGGEST_MIN_SIM = 0.25  # cosine similarity below this → no pre-selected guess
 DETECT_MAX_SIDE = 1600
 _analyzer = None
@@ -91,7 +92,7 @@ def _scan_one(rel: str, mtime: float) -> None:
 def _centroids() -> dict[str, np.ndarray]:
     with core.db() as con:
         rows = con.execute(
-            "SELECT label, embedding FROM faces WHERE label IS NOT NULL AND label != ?", (IGNORE,)
+            "SELECT label, embedding FROM faces WHERE label IS NOT NULL AND label NOT IN (?, ?)", (IGNORE, STRANGER)
         ).fetchall()
     grouped: dict[str, list[np.ndarray]] = {}
     for r in rows:
@@ -138,7 +139,8 @@ def label_options() -> list[str]:
 def people() -> list[str]:
     with core.db() as con:
         rows = con.execute(
-            "SELECT DISTINCT label FROM faces WHERE label IS NOT NULL AND label != ? ORDER BY label", (IGNORE,)
+            "SELECT DISTINCT label FROM faces WHERE label IS NOT NULL AND label NOT IN (?, ?) ORDER BY label",
+            (IGNORE, STRANGER),
         )
         return [r[0] for r in rows]
 

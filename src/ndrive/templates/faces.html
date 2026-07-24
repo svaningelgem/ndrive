@@ -41,6 +41,7 @@ header a { color: #4a9eff; text-decoration: none; }
       <option value="" {{ 'selected' if not f['suggest'] }} disabled>— who is this? —</option>
       {% for n in people %}<option value="{{ n }}" {{ 'selected' if n == f['suggest'] }}>{{ n }}</option>{% endfor %}
       <option value="__new__">＋ new person…</option>
+      <option value="{{ stranger }}">👥 someone unknown</option>
       <option value="{{ ignore }}">🚫 not a face</option>
     </select>
     <button onclick="save(this)">✓ confirm</button>

@@ -404,6 +404,12 @@ def test_face_labeling_flow(client: TestClient) -> None:
     assert faces.people() == ["mama", "papa"]
     assert r.json()["remaining"] == 0
 
+    # strangers are archived but never become suggestable people
+    stranger = _insert_face("alice/a.jpg", "40,10,60,30", _vec(3))
+    client.post("/api/face", auth=ALICE, json={"face_id": stranger, "label": faces.STRANGER})
+    assert faces.people() == ["mama", "papa"]
+    assert faces.unlabeled() == []
+
     # gallery filter by person
     assert "alice/a.jpg" in client.get("/?person=mama", auth=BOB).text
     client.post("/api/upload", auth=BOB, files=[("files", ("b.jpg", mandel_jpeg(), "image/jpeg"))])
