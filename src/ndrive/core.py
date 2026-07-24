@@ -8,10 +8,12 @@ Layout under HOME (default ./storage):
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import shutil
 import sqlite3
+import subprocess
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -25,6 +27,8 @@ register_heif_opener()
 log = logging.getLogger("ndrive")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
+VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".3gp", ".avi"}
+MEDIA_EXTS = IMAGE_EXTS | VIDEO_EXTS
 PHASH_DUP_DISTANCE = 6  # hamming distance on the 64-bit phash; bursts may trip this — we warn, never block
 EXIF_DT_ORIGINAL, EXIF_DT, EXIF_DT_DIGITIZED, EXIF_IFD = 36867, 306, 36868, 0x8769
 THUMB_SIDE = 320
@@ -139,22 +143,30 @@ def _taken_at(img: Image.Image, mtime: float) -> str:
 def index_file(rel: str) -> list[str]:
     """(Re)index one file; returns paths of near-duplicate existing photos."""
     abs_ = resolve(rel)
-    if abs_.suffix.lower() not in IMAGE_EXTS or not abs_.is_file():
+    ext = abs_.suffix.lower()
+    if ext not in MEDIA_EXTS or not abs_.is_file():
         return []
     st = abs_.stat()
     width = height = phash = None
     taken = datetime.fromtimestamp(st.st_mtime).isoformat(sep=" ", timespec="seconds")
+    thumb = _rendition_path(rel, st.st_mtime, THUMB_SIDE)
     try:
-        with Image.open(abs_) as img:
-            width, height = img.size
-            taken = _taken_at(img, st.st_mtime)
-            phash = str(imagehash.phash(img))
-            # we paid for the full decode (HEICs are expensive) — write the gallery thumb now, for free
-            thumb = _rendition_path(rel, st.st_mtime, THUMB_SIDE)
+        if ext in VIDEO_EXTS:
+            meta = _ffprobe(abs_)
+            taken = _video_taken(meta) or taken
+            width, height = _video_dims(meta)
             if not thumb.exists():
-                _write_rendition(img, thumb, THUMB_SIDE)
+                _grab_frame(abs_, thumb, THUMB_SIDE)
+        else:
+            with Image.open(abs_) as img:
+                width, height = img.size
+                taken = _taken_at(img, st.st_mtime)
+                phash = str(imagehash.phash(img))
+                # we paid for the full decode (HEICs are expensive) — write the gallery thumb now, for free
+                if not thumb.exists():
+                    _write_rendition(img, thumb, THUMB_SIDE)
     except Exception as exc:  # noqa: BLE001 — corrupt or half-uploaded: keep it listed, unhashed
-        log.warning(f"cannot read image {rel}: {exc}")
+        log.warning(f"cannot read media {rel}: {exc}")
     dups = _near_duplicates(phash, rel)
     now = datetime.now().isoformat(sep=" ", timespec="seconds")
     with db() as con:
@@ -178,6 +190,69 @@ def index_file(rel: str) -> list[str]:
     return dups
 
 
+def _ffprobe(abs_: Path) -> dict:
+    out = subprocess.run(
+        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", str(abs_)],
+        capture_output=True,
+        check=True,
+        timeout=60,
+    )
+    return json.loads(out.stdout)
+
+
+def _video_taken(meta: dict) -> str | None:
+    # ponytail: no THM-sidecar fallback for 2000s-era camera AVIs — phone clips carry creation_time; rest gets mtime
+    tag_sets = [meta.get("format", {}).get("tags", {})] + [s.get("tags", {}) for s in meta.get("streams", [])]
+    for tags in tag_sets:
+        for key, value in tags.items():
+            if key.lower() == "creation_time":
+                try:
+                    dt = datetime.fromisoformat(str(value))
+                except ValueError:
+                    continue
+                return dt.astimezone().replace(tzinfo=None).isoformat(sep=" ", timespec="seconds")
+    return None
+
+
+def _video_dims(meta: dict) -> tuple[int | None, int | None]:
+    for stream in meta.get("streams", []):
+        if stream.get("codec_type") == "video":
+            return stream.get("width"), stream.get("height")
+    return None, None
+
+
+def _grab_frame(src: Path, out: Path, max_side: int) -> None:
+    for seek in ("1", "0"):  # 1s in for a representative frame; retry at 0 for clips shorter than that
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-ss",
+                    seek,
+                    "-i",
+                    str(src),
+                    "-frames:v",
+                    "1",
+                    "-vf",
+                    f"scale='min({max_side},iw)':-2",
+                    "-y",
+                    str(out),
+                ],
+                capture_output=True,
+                check=True,
+                timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):
+            out.unlink(missing_ok=True)
+            continue
+        if out.exists() and out.stat().st_size:
+            return
+        out.unlink(missing_ok=True)
+    raise RuntimeError(f"ffmpeg could not extract a frame from {src.name}")
+
+
 def _near_duplicates(phash: str | None, rel: str) -> list[str]:
     if not phash:
         return []
@@ -194,7 +269,7 @@ def scan_all() -> None:
         known = {r["path"]: (r["mtime"], r["size"]) for r in con.execute("SELECT path, mtime, size FROM photos")}
     found = set()
     for p in sorted(DATA.rglob("*")):
-        if p.is_file() and p.suffix.lower() in IMAGE_EXTS:
+        if p.is_file() and p.suffix.lower() in MEDIA_EXTS:
             rel = p.relative_to(DATA).as_posix()
             found.add(rel)
             st = p.stat()
@@ -284,7 +359,10 @@ def list_photos(me: str, owner: str | None = None, sort: str = "desc") -> list[d
         {where}
         GROUP BY p.path ORDER BY {order}"""
     with db() as con:
-        return [dict(r) for r in con.execute(sql, {"me": me, "owner": owner})]
+        rows = [dict(r) for r in con.execute(sql, {"me": me, "owner": owner})]
+    for r in rows:
+        r["video"] = Path(r["path"]).suffix.lower() in VIDEO_EXTS
+    return rows
 
 
 # --- renditions ------------------------------------------------------------
@@ -310,8 +388,11 @@ def rendition(rel: str, max_side: int) -> Path:
     abs_ = resolve(rel)
     out = _rendition_path(rel, abs_.stat().st_mtime, max_side)
     if not out.exists():
-        with Image.open(abs_) as img:
-            _write_rendition(img, out, max_side)
+        if abs_.suffix.lower() in VIDEO_EXTS:
+            _grab_frame(abs_, out, max_side)
+        else:
+            with Image.open(abs_) as img:
+                _write_rendition(img, out, max_side)
     return out
 
 

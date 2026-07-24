@@ -1,4 +1,7 @@
 import io
+import shutil
+import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -186,6 +189,45 @@ def test_taken_at_digitized_fallback(client: TestClient) -> None:
         assert (
             con.execute("SELECT taken_at FROM photos WHERE path='alice/d.jpg'").fetchone()[0] == "2026-07-02 09:30:00"
         )
+
+
+def test_video_indexing_and_playback(client: TestClient) -> None:
+    if not shutil.which("ffmpeg"):
+        pytest.skip("no ffmpeg available")
+    path = core.DATA / "alice/clip.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=1:size=64x48:rate=10",
+            "-metadata",
+            "creation_time=2026-07-05T12:00:00.000000Z",
+            "-y",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    core.index_file("alice/clip.mp4")
+    with core.db() as con:
+        row = con.execute("SELECT * FROM photos WHERE path='alice/clip.mp4'").fetchone()
+    expected = (datetime.fromisoformat("2026-07-05T12:00:00+00:00").astimezone().replace(tzinfo=None)).isoformat(
+        sep=" ", timespec="seconds"
+    )
+    assert row["taken_at"] == expected
+    assert row["width"] == 64
+    assert row["phash"] is None
+    with Image.open(core.rendition("alice/clip.mp4", core.THUMB_SIDE)) as frame:
+        assert frame.format == "JPEG"
+    html = client.get("/", auth=BOB).text
+    assert "alice/clip.mp4" in html
+    assert "▶" in html
+    r = client.get("/media/alice/clip.mp4", auth=BOB, headers={"Range": "bytes=0-99"})
+    assert r.status_code == 206  # partial content — video seeking works
 
 
 def test_heic_rendition(client: TestClient) -> None:

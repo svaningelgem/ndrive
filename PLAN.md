@@ -28,9 +28,12 @@ enough to delete later".
   "close" (holiday bursts are legitimate near-dups). Web upload warns inline;
   WebDAV arrivals get a "dup?" badge in the gallery — a PUT has no dialog
   channel.
-- **Formats: jpg / jpeg / png / heic / heif.** Browser always gets JPEG
-  renditions (400 px thumbs, 2048 px view — HEIC becomes viewable this way);
-  originals are never touched; zip download ships originals.
+- **Formats: jpg / jpeg / png / heic / heif + mp4 / mov / m4v / 3gp / avi.**
+  Browser always gets JPEG renditions (320 px thumbs — pre-written at index
+  time since we pay for the decode anyway — and 2048 px view; HEIC becomes
+  viewable this way). Videos: date via ffprobe `creation_time`, thumb via
+  ffmpeg frame grab, native `<video>` playback with HTTP ranges, **no
+  transcoding**. Originals are never touched; zip download ships originals.
 
 ## Phase 1 (this repo)
 
@@ -57,5 +60,7 @@ enough to delete later".
 
 ## Skipped on purpose
 
-Videos, quotas, sessions/logout, trash-restore UI, dedupe blocking, admin UI,
-share links. Each gets added when someone actually asks, not before.
+Video transcoding (HEVC clips that a desktop browser can't play fall back to
+the download link), quotas, sessions/logout, trash-restore UI, dedupe
+blocking, admin UI, share links. Each gets added when someone actually asks,
+not before.

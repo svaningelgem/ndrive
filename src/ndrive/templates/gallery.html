@@ -24,6 +24,8 @@ button:disabled { opacity: .4; cursor: default; }
 .card.selected { outline: 2px solid #4a9eff; }
 .dup { position: absolute; top: 6px; right: 6px; background: #b58900; color: #000; border-radius: 4px;
        padding: 0 .35rem; font-size: .8rem; }
+.play { position: absolute; inset: 0 0 1.8rem 0; display: grid; place-items: center; font-size: 2.2rem;
+        color: #fffd; text-shadow: 0 1px 6px #000c; pointer-events: none; }
 figcaption { display: flex; align-items: center; gap: .4rem; padding: .25rem .5rem; font-size: .8rem; color: #9aa0ab; }
 .like { border: 0; background: none; padding: .1rem; color: #9aa0ab; }
 .like.on { color: #ff5470; }
@@ -37,7 +39,7 @@ body.dropping::after { content: 'drop to upload ⤵'; position: fixed; inset: 0;
 #ctx li:hover { background: #4a9eff33; }
 dialog { border: 0; border-radius: 10px; background: #1c1f26; color: inherit; max-width: 94vw; padding: .6rem; }
 dialog::backdrop { background: #000c; }
-dialog img { max-width: 90vw; max-height: 82vh; display: block; margin: auto; }
+dialog img, dialog video { max-width: 90vw; max-height: 82vh; display: block; margin: auto; }
 dialog footer { display: flex; gap: .8rem; align-items: center; padding-top: .5rem; font-size: .85rem; }
 dialog a { color: #4a9eff; }
 </style>
@@ -58,7 +60,7 @@ dialog a { color: #4a9eff; }
     <option value="">📁 {{ user }}/</option>
     {% for f in my_folders %}<option value="{{ f }}">📁 {{ user }}/{{ f }}</option>{% endfor %}
   </select>
-  <label class="btn">upload<input id="up" type="file" accept="image/*,.heic,.heif" multiple hidden></label>
+  <label class="btn">upload<input id="up" type="file" accept="image/*,video/*,.heic,.heif" multiple hidden></label>
   <span>{{ user }}</span>
 </header>
 
@@ -75,6 +77,7 @@ dialog a { color: #4a9eff; }
     <img loading="lazy" src="/thumb/{{ p['path'] | q }}" alt="{{ p['path'] }}"
          onclick="openLb({{ loop.index0 }})" onerror="this.closest('.card').classList.add('broken')">
     <input type="checkbox" class="sel" onchange="toggleSel(this)">
+    {% if p['video'] %}<span class="play">▶</span>{% endif %}
     {% if p['dup_of'] %}<span class="dup" title="possible duplicate of {{ p['dup_of'] }}">dup?</span>{% endif %}
     <figcaption>
       <button class="like {{ 'on' if p['liked'] }}" onclick="toggleLike(this)">♥ <span>{{ p['likes'] }}</span></button>
@@ -87,6 +90,7 @@ dialog a { color: #4a9eff; }
 
 <dialog id="lb">
   <img id="lbimg" alt="">
+  <video id="lbvid" controls hidden></video>
   <footer>
     <span id="lbmeta"></span>
     <span class="grow"></span>
@@ -196,11 +200,23 @@ addEventListener('drop', e => {
 function openLb(i) {
   lbIndex = i;
   const path = paths[i];
-  document.getElementById('lbimg').src = '/view/' + q(path);
+  const isVid = /\.(mp4|mov|m4v|3gp|avi)$/i.test(path);
+  const img = document.getElementById('lbimg'), vid = document.getElementById('lbvid');
+  img.hidden = isVid;
+  vid.hidden = !isVid;
+  if (isVid) {
+    img.removeAttribute('src');
+    vid.src = '/media/' + q(path);
+  } else {
+    vid.pause();
+    vid.removeAttribute('src');
+    img.src = '/view/' + q(path);
+  }
   document.getElementById('lbmeta').textContent = path;
   document.getElementById('lborig').href = '/media/' + q(path);
   lb.showModal();
 }
+lb.addEventListener('close', () => document.getElementById('lbvid').pause());
 addEventListener('keydown', e => {
   if (!lb.open) return;
   if (e.key === 'ArrowRight' && lbIndex < paths.length - 1) openLb(lbIndex + 1);

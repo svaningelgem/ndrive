@@ -56,8 +56,11 @@ folder.
   Restore = move the file back. `python -m ndrive purge-trash --days 30`
   empties old trash.
 - jpg / png / heic are indexed and shown in the gallery (HEIC is converted to
-  JPEG for the browser; originals stay untouched). Other file types are fine on
-  the drive — they're just not pictures.
+  JPEG for the browser; originals stay untouched). Videos (mp4 / mov / m4v /
+  3gp / avi) are in the gallery too: frame-grab thumbnail with a ▶ badge,
+  playback in the lightbox. There is no transcoding — if your browser can't
+  play a codec (e.g. HEVC on some desktops), use the download link. Other file
+  types are fine on the drive — they're just not media.
 - A `dup?` badge or upload warning means a perceptual-hash near-match; nothing
   is ever blocked.
 
