@@ -1,0 +1,45 @@
+[project]
+name = "ndrive"
+version = "0.1.0"
+description = "Temporary family photo drive: WebDAV + web gallery with likes"
+requires-python = ">=3.11"
+dependencies = [
+    "a2wsgi",
+    "fastapi",
+    "imagehash",
+    "jinja2",
+    "pillow",
+    "pillow-heif",
+    "python-multipart",
+    "uvicorn",
+    "wsgidav",
+]
+
+[project.optional-dependencies]
+dev = ["httpx", "pytest", "pytest-mock", "ruff"]
+
+[project.scripts]
+ndrive = "ndrive.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ndrive = ["templates/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+ignore = [
+    "B008",  # Depends()/Form() in argument defaults is the FastAPI idiom
+    "DTZ",   # naive local datetimes are deliberate: EXIF has no timezone either
+]

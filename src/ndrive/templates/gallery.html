@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ndrive</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #14161a; color: #e8e8e8; font: 15px/1.4 system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center;
+         padding: .6rem 1rem; background: #1c1f26; box-shadow: 0 1px 4px #0008; }
+header h1 { font-size: 1.1rem; margin: 0 .4rem 0 0; }
+.grow { flex: 1; }
+select, button, .btn { background: #2a2e37; color: inherit; border: 1px solid #3a3f4b; border-radius: 6px;
+                       padding: .35rem .7rem; font: inherit; cursor: pointer; }
+button:disabled { opacity: .4; cursor: default; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 8px; }
+.card { position: relative; margin: 0; background: #1c1f26; border-radius: 8px; overflow: hidden; }
+.card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: pointer; }
+.card.broken img { display: none; }
+.card .sel { position: absolute; top: 6px; left: 6px; width: 20px; height: 20px; accent-color: #4a9eff; opacity: 0; }
+.card:hover .sel, .card .sel:checked { opacity: 1; }
+.card.selected { outline: 2px solid #4a9eff; }
+.dup { position: absolute; top: 6px; right: 6px; background: #b58900; color: #000; border-radius: 4px;
+       padding: 0 .35rem; font-size: .8rem; }
+figcaption { display: flex; align-items: center; gap: .4rem; padding: .25rem .5rem; font-size: .8rem; color: #9aa0ab; }
+.like { border: 0; background: none; padding: .1rem; color: #9aa0ab; }
+.like.on { color: #ff5470; }
+.meta { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.empty { text-align: center; color: #9aa0ab; margin-top: 3rem; }
+dialog { border: 0; border-radius: 10px; background: #1c1f26; color: inherit; max-width: 94vw; padding: .6rem; }
+dialog::backdrop { background: #000c; }
+dialog img { max-width: 90vw; max-height: 82vh; display: block; margin: auto; }
+dialog footer { display: flex; gap: .8rem; align-items: center; padding-top: .5rem; font-size: .85rem; }
+dialog a { color: #4a9eff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📷 ndrive</h1>
+  <select id="owner" onchange="applyFilter()">
+    <option value="">everyone</option>
+    {% for o in owners %}<option value="{{ o }}" {{ 'selected' if o == owner }}>{{ o }}</option>{% endfor %}
+  </select>
+  <button onclick="toggleSort()">date {{ '↑' if sort == 'asc' else '↓' }}</button>
+  <span class="grow"></span>
+  <span id="selinfo"></span>
+  <button id="dl" disabled onclick="downloadSel()">download zip</button>
+  <button id="del" disabled onclick="deleteSel()">delete</button>
+  <label class="btn">upload<input id="up" type="file" accept="image/*,.heic,.heif" multiple hidden></label>
+  <span>{{ user }}</span>
+</header>
+
+<div class="grid">
+{% for p in photos %}
+  <figure class="card" data-path="{{ p['path'] }}">
+    <img loading="lazy" src="/thumb/{{ p['path'] | q }}" alt="{{ p['path'] }}"
+         onclick="openLb({{ loop.index0 }})" onerror="this.closest('.card').classList.add('broken')">
+    <input type="checkbox" class="sel" onchange="toggleSel(this)">
+    {% if p['dup_of'] %}<span class="dup" title="possible duplicate of {{ p['dup_of'] }}">dup?</span>{% endif %}
+    <figcaption>
+      <button class="like {{ 'on' if p['liked'] }}" onclick="toggleLike(this)">♥ <span>{{ p['likes'] }}</span></button>
+      <span class="meta" title="{{ p['path'] }}">{{ p['owner'] }} · {{ p['taken_at'][:16] }}</span>
+    </figcaption>
+  </figure>
+{% endfor %}
+</div>
+{% if not photos %}<p class="empty">No pictures yet — hit upload, or mount the drive.</p>{% endif %}
+
+<dialog id="lb">
+  <img id="lbimg" alt="">
+  <footer>
+    <span id="lbmeta"></span>
+    <span class="grow"></span>
+    <a id="lborig" href="">download original</a>
+    <button onclick="lb.close()">close</button>
+  </footer>
+</dialog>
+
+<script>
+const paths = {{ paths_json | safe }};
+const sel = new Set();
+const lb = document.getElementById('lb');
+let lbIndex = 0;
+
+function q(p) { return p.split('/').map(encodeURIComponent).join('/'); }
+
+function applyFilter() {
+  const o = document.getElementById('owner').value;
+  const u = new URL(location);
+  o ? u.searchParams.set('owner', o) : u.searchParams.delete('owner');
+  location = u;
+}
+function toggleSort() {
+  const u = new URL(location);
+  u.searchParams.set('sort', u.searchParams.get('sort') === 'asc' ? 'desc' : 'asc');
+  location = u;
+}
+function toggleSel(box) {
+  const card = box.closest('.card');
+  box.checked ? sel.add(card.dataset.path) : sel.delete(card.dataset.path);
+  card.classList.toggle('selected', box.checked);
+  document.getElementById('selinfo').textContent = sel.size ? sel.size + ' selected' : '';
+  for (const id of ['dl', 'del']) document.getElementById(id).disabled = !sel.size;
+}
+async function toggleLike(btn) {
+  const path = btn.closest('.card').dataset.path;
+  const r = await fetch('/api/like', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                      body: JSON.stringify({path})});
+  const d = await r.json();
+  btn.classList.toggle('on', d.liked);
+  btn.querySelector('span').textContent = d.count;
+}
+async function deleteSel() {
+  if (!confirm('Move ' + sel.size + ' selected picture(s) to the trash?')) return;
+  const r = await fetch('/api/delete', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                        body: JSON.stringify({paths: [...sel]})});
+  alert((await r.json()).message);
+  location.reload();
+}
+function downloadSel() {
+  const form = document.createElement('form');
+  form.method = 'POST';
+  form.action = '/download';
+  for (const p of sel) {
+    const i = document.createElement('input');
+    i.type = 'hidden'; i.name = 'paths'; i.value = p;
+    form.append(i);
+  }
+  document.body.append(form);
+  form.submit();
+  form.remove();
+}
+document.getElementById('up').addEventListener('change', async e => {
+  const fd = new FormData();
+  for (const f of e.target.files) fd.append('files', f);
+  const r = await fetch('/api/upload', {method: 'POST', body: fd});
+  const d = await r.json();
+  if (d.warnings.length) alert('Uploaded, but:\n' + d.warnings.join('\n'));
+  location.reload();
+});
+function openLb(i) {
+  lbIndex = i;
+  const path = paths[i];
+  document.getElementById('lbimg').src = '/view/' + q(path);
+  document.getElementById('lbmeta').textContent = path;
+  document.getElementById('lborig').href = '/media/' + q(path);
+  lb.showModal();
+}
+addEventListener('keydown', e => {
+  if (!lb.open) return;
+  if (e.key === 'ArrowRight' && lbIndex < paths.length - 1) openLb(lbIndex + 1);
+  if (e.key === 'ArrowLeft' && lbIndex > 0) openLb(lbIndex - 1);
+});
+</script>
+</body>
+</html>

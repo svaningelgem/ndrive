@@ -1,0 +1,21 @@
+.venv/
+.wenv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+storage/
+
+# masked host dotfiles in this environment
+.bash_profile
+.bashrc
+.gitconfig
+.gitmodules
+.idea
+.mcp.json
+.profile
+.ripgreprc
+.vscode
+.zprofile
+.zshrc
+.claude/
