@@ -1,0 +1,9 @@
+services:
+  ndrive:
+    build: .
+    container_name: ndrive
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8484:8484"
+    volumes:
+      - /srv/ndrive:/storage
