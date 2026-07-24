@@ -301,7 +301,12 @@ function openLb(i) {
   document.getElementById('lborig').href = '/media/' + q(path);
   lb.showModal();
 }
-lb.addEventListener('close', () => document.getElementById('lbvid').pause());
+lb.addEventListener('close', () => {
+  const vid = document.getElementById('lbvid');
+  vid.pause();
+  vid.removeAttribute('src');
+  vid.load();  // fully detach the media resource — pause() alone can leave audio/buffering running
+});
 addEventListener('keydown', e => {
   if (!lb.open) return;
   if (e.key === 'ArrowRight' && lbIndex < paths.length - 1) openLb(lbIndex + 1);
