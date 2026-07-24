@@ -90,6 +90,9 @@ def _hash(password: str, salt: bytes) -> bytes:
 def add_user(username: str, password: str) -> None:
     if not username.replace("-", "").isalnum() or username.startswith("."):
         raise ValueError("username must be alphanumeric — it becomes the folder name")
+    existing = canonical_user(username)
+    if existing is not None and existing != username:
+        raise ValueError(f"user already exists as {existing!r} (usernames are case-insensitive)")
     salt = os.urandom(16)
     with db() as con:
         con.execute("INSERT OR REPLACE INTO users VALUES(?,?,?)", (username, salt, _hash(password, salt)))
@@ -100,10 +103,21 @@ def add_user(username: str, password: str) -> None:
 @lru_cache(
     maxsize=256
 )  # ponytail: caches plaintext creds in-process so scrypt (~50ms) runs once per user, not per request
-def verify_user(username: str, password: str) -> bool:
+def verify_user(username: str, password: str) -> str | None:
+    """Case-insensitive login; returns the canonical (stored) username on success, else None."""
     with db() as con:
-        row = con.execute("SELECT salt, pw_hash FROM users WHERE username=?", (username,)).fetchone()
-    return row is not None and hmac.compare_digest(_hash(password, row["salt"]), row["pw_hash"])
+        row = con.execute(
+            "SELECT username, salt, pw_hash FROM users WHERE username=? COLLATE NOCASE", (username,)
+        ).fetchone()
+    if row is None or not hmac.compare_digest(_hash(password, row["salt"]), row["pw_hash"]):
+        return None
+    return row["username"]
+
+
+def canonical_user(username: str) -> str | None:
+    with db() as con:
+        row = con.execute("SELECT username FROM users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
+    return row[0] if row else None
 
 
 def rename_user(old: str, new: str) -> None:

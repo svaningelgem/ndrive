@@ -29,9 +29,10 @@ WRITE_METHODS = {"PUT", "MKCOL", "PROPPATCH", "DELETE", "MOVE", "COPY", "LOCK", 
 
 
 def current_user(credentials: HTTPBasicCredentials = Depends(security)) -> str:
-    if not core.verify_user(credentials.username, credentials.password):
+    canonical = core.verify_user(credentials.username, credentials.password)
+    if not canonical:
         raise HTTPException(401, "Bad credentials", headers={"WWW-Authenticate": 'Basic realm="ndrive"'})
-    return credentials.username
+    return canonical
 
 
 class PathsPayload(BaseModel):
@@ -62,7 +63,7 @@ class SqliteDomainController(BaseDomainController):
         return True
 
     def basic_auth_user(self, realm, user_name, password, environ):
-        return core.verify_user(user_name, password)
+        return core.verify_user(user_name, password) is not None
 
     def supports_http_digest_auth(self):
         return False
@@ -108,7 +109,8 @@ def _guarded(dav_app):
         if method not in WRITE_METHODS:
             return dav_app(environ, start_response)  # reads: everyone (WsgiDAV still checks the password)
 
-        user, pw = _basic_creds(environ)
+        claimed, pw = _basic_creds(environ)
+        user = core.canonical_user(claimed) if claimed else None  # case-insensitive; canonical case owns the folder
         if not user:
             return _reply(start_response, "401 Unauthorized", extra=(("WWW-Authenticate", 'Basic realm="ndrive"'),))
         targets = [rel] if method != "COPY" else []  # COPY reads the source, so only its destination must be yours
@@ -121,7 +123,7 @@ def _guarded(dav_app):
 
         if method == "DELETE":
             # handled here, not by WsgiDAV: soft-delete into trash/ (family + hard delete = tears)
-            if not core.verify_user(user, pw):
+            if not core.verify_user(claimed, pw):
                 return _reply(start_response, "401 Unauthorized", extra=(("WWW-Authenticate", 'Basic realm="ndrive"'),))
             if not core.resolve(rel).exists():
                 return _reply(start_response, "404 Not Found")
@@ -210,7 +212,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
             {
                 "user": user,
                 "faces": faces.unlabeled(),
-                "people": faces.people(),
+                "people": faces.label_options(),
                 "total": faces.unlabeled_count(),
                 "ignore": faces.IGNORE,
             },

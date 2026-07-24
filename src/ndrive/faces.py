@@ -130,6 +130,11 @@ def set_label(face_id: int, label: str) -> None:
         con.execute("UPDATE faces SET label=? WHERE id=?", (label.strip(), face_id))
 
 
+def label_options() -> list[str]:
+    """Names offered on the labeling page: every account plus everyone already labeled."""
+    return sorted(set(core.users()) | set(people()), key=str.lower)
+
+
 def people() -> list[str]:
     with core.db() as con:
         rows = con.execute(

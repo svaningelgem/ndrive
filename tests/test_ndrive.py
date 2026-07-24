@@ -328,6 +328,8 @@ def test_face_labeling_flow(client: TestClient) -> None:
     html = client.get("/faces", auth=BOB).text
     assert f"/face/{near}" in html
     assert "selected>mama" in html  # the model's guess comes pre-selected
+    assert ">alice<" in html  # account names are offered even before anyone labeled them
+    assert ">bob<" in html
 
     crop = client.get(f"/face/{near}", auth=BOB)
     assert crop.status_code == 200
