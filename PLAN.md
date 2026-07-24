@@ -60,7 +60,11 @@ enough to delete later".
 
 ## Skipped on purpose
 
-Video transcoding (HEVC clips that a desktop browser can't play fall back to
-the download link), quotas, sessions/logout, trash-restore UI, dedupe
-blocking, admin UI, share links. Each gets added when someone actually asks,
-not before.
+Quotas, sessions/logout, trash-restore UI, dedupe blocking, admin UI, share
+links. Each gets added when someone actually asks, not before.
+
+(Video transcoding graduated from this list: raw phone clips — 4K/HEVC at
+50-100 Mbit — stream terribly, so videos outside the h264/1080p/8Mbit envelope
+get a background `veryfast` H.264 rendition in `cache/vid/`; the lightbox
+plays `/stream/<path>` which falls back to the original until the rendition
+exists. One ffmpeg at a time — the box also runs the mail server.)

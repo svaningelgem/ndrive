@@ -58,9 +58,13 @@ folder.
 - jpg / png / heic are indexed and shown in the gallery (HEIC is converted to
   JPEG for the browser; originals stay untouched). Videos (mp4 / mov / m4v /
   3gp / avi) are in the gallery too: frame-grab thumbnail with a ▶ badge,
-  playback in the lightbox. There is no transcoding — if your browser can't
-  play a codec (e.g. HEVC on some desktops), use the download link. Other file
-  types are fine on the drive — they're just not media.
+  playback in the lightbox. Big/HEVC clips get a background 1080p H.264
+  streaming rendition (one ffmpeg at a time); until theirs is ready, the
+  original streams and may stutter. Downloads always ship the original. Other
+  file types are fine on the drive — they're just not media.
+- Logins are case-insensitive; the drive folder keeps the canonical spelling.
+- The duplicates page: delete your own copy, or hit "keep both" when the match
+  is a legitimate burst/similar shot — that clears the flag for everyone.
 - A `dup?` badge or upload warning means a perceptual-hash near-match; nothing
   is ever blocked.
 
