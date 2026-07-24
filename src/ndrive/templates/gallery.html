@@ -44,6 +44,11 @@ dialog::backdrop { background: #000c; }
 dialog img, dialog video { max-width: 90vw; max-height: 82vh; display: block; margin: auto; }
 dialog footer { display: flex; gap: .8rem; align-items: center; padding-top: .5rem; font-size: .85rem; }
 dialog a { color: #4a9eff; }
+#updlg { text-align: center; padding: 1.2rem 2rem; }
+#updlg h3 { margin: 0 0 .4rem; }
+#updlg p { margin: .3rem 0; color: #9aa0ab; font-size: .9rem; max-width: 60vw;
+           overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#updlg progress { width: min(70vw, 480px); height: 16px; accent-color: #4a9eff; }
 </style>
 </head>
 <body>
@@ -101,6 +106,13 @@ dialog a { color: #4a9eff; }
 {% endfor %}
 </div>
 {% if not photos %}<p class="empty">No pictures yet — hit upload, or mount the drive.</p>{% endif %}
+
+<dialog id="updlg">
+  <h3 id="updlg-title">uploading…</h3>
+  <p id="updlg-file"></p>
+  <progress id="updlg-bar" max="100" value="0"></progress>
+  <p id="updlg-pct"></p>
+</dialog>
 
 <dialog id="lb">
   <img id="lbimg" alt="">
@@ -171,29 +183,49 @@ function downloadSel() {
 const folderSel = document.getElementById('folderSel');
 const ctx = document.getElementById('ctx');
 
+function xhrUpload(fd, onProgress) {  // fetch() has no upload progress; XHR does
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', '/api/upload');
+    x.upload.onprogress = e => onProgress(e.loaded);
+    x.onload = () => x.status < 300 ? resolve(JSON.parse(x.responseText)) : reject(new Error(x.status));
+    x.onerror = () => reject(new Error('network'));
+    x.send(fd);
+  });
+}
 async function uploadFiles(files) {
   if (!files.length) return;
-  const info = document.getElementById('selinfo');
+  const dlg = document.getElementById('updlg');
+  const bar = document.getElementById('updlg-bar');
+  const pct = document.getElementById('updlg-pct');
+  const total = files.reduce((s, f) => s + f.size, 0) || 1;
+  let doneBytes = 0, done = 0;
   const notes = [];
-  let done = 0;
-  for (const f of files) {  // one request per file: live progress + a dropped connection keeps what's done
-    info.textContent = 'uploading ' + (done + 1) + '/' + files.length + '…';
+  dlg.showModal();
+  for (const f of files) {  // one request per file: a dropped connection keeps what's done
+    document.getElementById('updlg-title').textContent = 'uploading ' + (done + 1) + ' / ' + files.length;
+    document.getElementById('updlg-file').textContent = f.name;
     const fd = new FormData();
     fd.append('folder', folderSel.value);
     fd.append('files', f);
     try {
-      const r = await fetch('/api/upload', {method: 'POST', body: fd});
-      if (!r.ok) throw new Error(r.status);
-      notes.push(...(await r.json()).warnings);
+      const d = await xhrUpload(fd, loaded => {
+        const p = Math.min(100, Math.round(100 * (doneBytes + loaded) / total));
+        bar.value = p;
+        pct.textContent = p + '%';
+      });
+      notes.push(...d.warnings);
     } catch {
       notes.push(f.name + ' failed to upload — try that one again.');
     }
+    doneBytes += f.size;
     done++;
   }
-  info.textContent = '';
+  dlg.close();
   if (notes.length) alert('Done, but:\n' + notes.join('\n'));
   location.reload();
 }
+document.getElementById('updlg').addEventListener('cancel', e => e.preventDefault());  // no Esc mid-upload
 async function newFolder() {
   const name = prompt('New folder name (inside {{ user }}/):');
   if (!name) return;
