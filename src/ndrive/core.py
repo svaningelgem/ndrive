@@ -484,13 +484,20 @@ def clear_dup(rel: str) -> None:
         con.execute("UPDATE photos SET dup_of=NULL WHERE path=?", (rel,))
 
 
-def list_photos(me: str, owner: str | None = None, sort: str = "asc", person: str | None = None) -> list[dict]:
+def list_photos(
+    me: str,
+    owner: str | None = None,
+    sort: str = "asc",
+    person: str | None = None,
+    liked_only: bool = False,
+) -> list[dict]:
     conditions = []
     if owner:
         conditions.append("p.owner = :owner")
     if person:
         conditions.append("p.path IN (SELECT path FROM faces WHERE label = :person)")
     where = "WHERE " + " AND ".join(conditions) if conditions else ""
+    having = "HAVING COUNT(l.username) > 0" if liked_only else ""
     order = {
         "asc": "p.taken_at ASC, p.path ASC",
         "owner": "p.owner ASC, p.taken_at DESC, p.path DESC",  # "sort by person" until face data exists
@@ -501,7 +508,7 @@ def list_photos(me: str, owner: str | None = None, sort: str = "asc", person: st
                COALESCE(MAX(CASE WHEN l.username = :me THEN 1 END), 0) AS liked
         FROM photos p LEFT JOIN likes l ON l.path = p.path
         {where}
-        GROUP BY p.path ORDER BY {order}"""
+        GROUP BY p.path {having} ORDER BY {order}"""
     with db() as con:
         rows = [dict(r) for r in con.execute(sql, {"me": me, "owner": owner, "person": person})]
     for r in rows:

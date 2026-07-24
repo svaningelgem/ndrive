@@ -16,6 +16,7 @@ header h1 { font-size: 1.1rem; margin: 0 .4rem 0 0; }
 select, button, .btn { background: #2a2e37; color: inherit; border: 1px solid #3a3f4b; border-radius: 6px;
                        padding: .35rem .7rem; font: inherit; cursor: pointer; }
 button:disabled { opacity: .4; cursor: default; }
+button.on { color: #ff5470; border-color: #ff5470; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 8px; }
 .card { position: relative; margin: 0; background: #1c1f26; border-radius: 8px; overflow: hidden; }
 .card img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; cursor: pointer; }
@@ -53,6 +54,7 @@ dialog a { color: #4a9eff; }
     {% for o in owners %}<option value="{{ o }}" {{ 'selected' if o == owner }}>{{ o }}</option>{% endfor %}
   </select>
   <button onclick="toggleSort()">date {{ '↑' if sort == 'asc' else '↓' }}</button>
+  <button class="{{ 'on' if liked }}" onclick="toggleLiked()" title="only pictures with likes">♥ liked</button>
   {% if people %}
   <select id="personSel" onchange="applyPerson()">
     <option value="">any face</option>
@@ -63,6 +65,7 @@ dialog a { color: #4a9eff; }
   {% if unlabeled_count %}<a class="btn" href="/faces" style="text-decoration:none">🙂 {{ unlabeled_count }} faces</a>{% endif %}
   <span class="grow"></span>
   <span id="selinfo"></span>
+  <button onclick="selectAll()">select all</button>
   <button id="dl" disabled onclick="downloadSel()">download zip</button>
   <button id="del" disabled onclick="deleteSel()">delete</button>
   <select id="folderSel" title="upload destination">
@@ -204,6 +207,21 @@ function sortByPerson() {
   const u = new URL(location);
   u.searchParams.set('sort', 'owner');
   location = u;
+}
+function toggleLiked() {
+  const u = new URL(location);
+  u.searchParams.get('liked') ? u.searchParams.delete('liked') : u.searchParams.set('liked', '1');
+  location = u;
+}
+function selectAll() {
+  const boxes = [...document.querySelectorAll('.sel')];
+  const target = !boxes.every(b => b.checked);
+  for (const b of boxes) {
+    if (b.checked !== target) {
+      b.checked = target;
+      toggleSel(b);
+    }
+  }
 }
 function applyPerson() {
   const p = document.getElementById('personSel').value;

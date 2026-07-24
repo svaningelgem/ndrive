@@ -180,8 +180,9 @@ def create_app(home: str | Path | None = None) -> FastAPI:
         owner: str | None = None,
         sort: str = "asc",
         person: str | None = None,
+        liked: int = 0,
     ):
-        photos = core.list_photos(user, owner=owner, sort=sort, person=person)
+        photos = core.list_photos(user, owner=owner, sort=sort, person=person, liked_only=bool(liked))
         return templates.TemplateResponse(
             request,
             "gallery.html",
@@ -191,6 +192,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 "owners": core.users(),
                 "owner": owner or "",
                 "sort": sort,
+                "liked": liked,
                 "my_folders": core.subfolders(user),
                 "dup_count": len(core.duplicate_pairs()),
                 "people": faces.people(),
