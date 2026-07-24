@@ -18,7 +18,7 @@ select, button, .btn { background: #2a2e37; color: inherit; border: 1px solid #3
 button:disabled { opacity: .4; cursor: default; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; padding: 8px; }
 .card { position: relative; margin: 0; background: #1c1f26; border-radius: 8px; overflow: hidden; }
-.card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: pointer; }
+.card img { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; cursor: pointer; }
 .card.broken img { display: none; }
 .card .sel { position: absolute; top: 6px; left: 6px; width: 20px; height: 20px; accent-color: #4a9eff; opacity: 0; }
 .card:hover .sel, .card .sel:checked { opacity: 1; }
