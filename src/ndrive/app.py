@@ -182,7 +182,10 @@ def create_app(home: str | Path | None = None) -> FastAPI:
         person: str | None = None,
         liked: int = 0,
     ):
-        photos = core.list_photos(user, owner=owner, sort=sort, person=person, liked_only=bool(liked))
+        owner = owner or user  # default: your own drive; "*" = everyone
+        photos = core.list_photos(
+            user, owner=None if owner == "*" else owner, sort=sort, person=person, liked_only=bool(liked)
+        )
         return templates.TemplateResponse(
             request,
             "gallery.html",
@@ -190,7 +193,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 "user": user,
                 "photos": photos,
                 "owners": core.users(),
-                "owner": owner or "",
+                "owner": owner,
                 "sort": sort,
                 "liked": liked,
                 "my_folders": core.subfolders(user),

@@ -101,7 +101,8 @@ def test_upload_gallery_and_exif_date(client: TestClient) -> None:
     assert row["path"] == "alice/a.jpg"
     assert row["owner"] == "alice"
     assert row["taken_at"] == "2026-07-01 10:00:00"
-    assert "alice/a.jpg" in client.get("/", auth=BOB).text  # everyone sees everyone's pictures
+    assert "alice/a.jpg" in client.get("/?owner=*", auth=BOB).text  # everyone-view shows all pictures
+    assert "alice/a.jpg" not in client.get("/", auth=BOB).text  # default view: your own drive
 
 
 def test_duplicate_warning(client: TestClient) -> None:
@@ -158,7 +159,7 @@ def test_liked_filter(client: TestClient) -> None:
     client.post("/api/upload", auth=ALICE, files=[("files", ("b.jpg", jpeg_bytes((4, 5, 6)), "image/jpeg"))])
     client.post("/api/like", auth=BOB, json={"path": "alice/a.jpg"})
     assert [p["path"] for p in core.list_photos("bob", liked_only=True)] == ["alice/a.jpg"]
-    html = client.get("/?liked=1", auth=BOB).text
+    html = client.get("/?liked=1&owner=*", auth=BOB).text
     assert "alice/a.jpg" in html
     assert "alice/b.jpg" not in html
 
@@ -318,7 +319,7 @@ def test_video_indexing_and_playback(client: TestClient) -> None:
     assert row["phash"] is None
     with Image.open(core.rendition("alice/clip.mp4", core.THUMB_SIDE)) as frame:
         assert frame.format == "JPEG"
-    html = client.get("/", auth=BOB).text
+    html = client.get("/?owner=*", auth=BOB).text
     assert "alice/clip.mp4" in html
     assert "▶" in html
     r = client.get("/media/alice/clip.mp4", auth=BOB, headers={"Range": "bytes=0-99"})
@@ -431,7 +432,7 @@ def test_face_labeling_flow(client: TestClient) -> None:
     assert faces.unlabeled() == []
 
     # gallery filter by person
-    assert "alice/a.jpg" in client.get("/?person=mama", auth=BOB).text
+    assert "alice/a.jpg" in client.get("/?person=mama&owner=*", auth=BOB).text
     client.post("/api/upload", auth=BOB, files=[("files", ("b.jpg", mandel_jpeg(), "image/jpeg"))])
     photos = core.list_photos("bob", person="mama")
     assert [p["path"] for p in photos] == ["alice/a.jpg"]

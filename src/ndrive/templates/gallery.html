@@ -56,8 +56,9 @@ dialog a { color: #4a9eff; }
 <header>
   <h1>📷 ndrive</h1>
   <select id="owner" onchange="applyFilter()">
-    <option value="">everyone</option>
-    {% for o in owners %}<option value="{{ o }}" {{ 'selected' if o == owner }}>{{ o }}</option>{% endfor %}
+    <option value="{{ user }}" {{ 'selected' if owner == user }}>📁 mine</option>
+    <option value="*" {{ 'selected' if owner == '*' }}>👪 everyone</option>
+    {% for o in owners %}{% if o != user %}<option value="{{ o }}" {{ 'selected' if o == owner }}>{{ o }}</option>{% endif %}{% endfor %}
   </select>
   <button onclick="toggleSort()">date {{ '↑' if sort == 'asc' else '↓' }}</button>
   <button class="{{ 'on' if liked }}" onclick="toggleLiked()" title="only pictures with likes">♥ liked</button>
@@ -138,9 +139,8 @@ let lbIndex = 0;
 function q(p) { return p.split('/').map(encodeURIComponent).join('/'); }
 
 function applyFilter() {
-  const o = document.getElementById('owner').value;
   const u = new URL(location);
-  o ? u.searchParams.set('owner', o) : u.searchParams.delete('owner');
+  u.searchParams.set('owner', document.getElementById('owner').value);
   location = u;
 }
 function toggleSort() {
