@@ -39,6 +39,7 @@ body.dropping::after { content: 'drop to upload ⤵'; position: fixed; inset: 0;
        background: #2a2e37; border: 1px solid #3a3f4b; border-radius: 8px; box-shadow: 0 4px 16px #000a; }
 #ctx li { padding: .45rem .9rem; border-radius: 5px; cursor: pointer; white-space: nowrap; }
 #ctx li:hover { background: #4a9eff33; }
+#ctx li.disabled { opacity: .35; pointer-events: none; }
 dialog { border: 0; border-radius: 10px; background: #1c1f26; color: inherit; max-width: 94vw; padding: .6rem; }
 dialog::backdrop { background: #000c; }
 dialog img, dialog video { max-width: 90vw; max-height: 82vh; display: block; margin: auto; }
@@ -88,6 +89,8 @@ dialog a { color: #4a9eff; }
   <li onclick="ctxDo(sortByPerson)">👤 sort by person</li>
   <li onclick="ctxDo(() => location = '/duplicates')">🔁 review duplicates</li>
   <li onclick="ctxDo(() => location = '/faces')">🙂 label faces</li>
+  <li id="ctx-dl" onclick="ctxDo(downloadSel)">💾 download selected as zip</li>
+  <li id="ctx-del" onclick="ctxDo(deleteSel)">🗑 delete selected</li>
 </menu>
 
 <div class="grid">
@@ -264,6 +267,7 @@ function applyPerson() {
 function ctxDo(fn) { ctx.style.display = 'none'; fn(); }
 addEventListener('contextmenu', e => {
   e.preventDefault();
+  for (const id of ['ctx-dl', 'ctx-del']) document.getElementById(id).classList.toggle('disabled', !sel.size);
   ctx.style.display = 'block';
   ctx.style.left = Math.min(e.clientX, innerWidth - ctx.offsetWidth - 8) + 'px';
   ctx.style.top = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 8) + 'px';
