@@ -128,6 +128,7 @@ dialog a { color: #4a9eff; }
   </footer>
 </dialog>
 
+{% include "ui.html" %}
 <script>
 const paths = {{ paths_json | safe }};
 const sel = new Set();
@@ -164,11 +165,10 @@ async function toggleLike(btn) {
   btn.querySelector('span').textContent = d.count;
 }
 async function deleteSel() {
-  if (!confirm('Move ' + sel.size + ' selected picture(s) to the trash?')) return;
+  if (!await ask('Move ' + sel.size + ' selected picture(s) to the trash?')) return;
   const r = await fetch('/api/delete', {method: 'POST', headers: {'Content-Type': 'application/json'},
                                         body: JSON.stringify({paths: [...sel]})});
-  alert((await r.json()).message);
-  location.reload();
+  reloadWithToast((await r.json()).message);
 }
 function downloadSel() {
   const form = document.createElement('form');
@@ -225,18 +225,18 @@ async function uploadFiles(files) {
     done++;
   }
   dlg.close();
-  if (notes.length) alert('Done, but:\n' + notes.join('\n'));
-  location.reload();
+  notes.length ? reloadWithToast('Done, but:\n' + notes.join('\n')) : location.reload();
 }
 document.getElementById('updlg').addEventListener('cancel', e => e.preventDefault());  // no Esc mid-upload
 async function newFolder() {
-  const name = prompt('New folder name (inside {{ user }}/):');
+  const name = await ask('New folder name (inside {{ user }}/):', true);
   if (!name) return;
   const r = await fetch('/api/mkdir', {method: 'POST', headers: {'Content-Type': 'application/json'},
                                        body: JSON.stringify({folder: name})});
   const d = await r.json();
-  if (!r.ok) { alert(d.detail || 'Invalid folder name'); return; }
+  if (!r.ok) { toast(d.detail || 'Invalid folder name'); return; }
   folderSel.add(new Option('📁 {{ user }}/' + d.folder, d.folder, true, true));
+  toast('Created 📁 {{ user }}/' + d.folder + ' — uploads now go there');
 }
 function sortByPerson() {
   const u = new URL(location);

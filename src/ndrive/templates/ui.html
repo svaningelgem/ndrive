@@ -1,0 +1,60 @@
+<div id="toasts"></div>
+<dialog id="ask">
+  <p id="ask-msg"></p>
+  <input id="ask-input" autocomplete="off">
+  <footer>
+    <button id="ask-cancel">cancel</button>
+    <button id="ask-ok">OK</button>
+  </footer>
+</dialog>
+<style>
+#toasts { position: fixed; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 20;
+          display: flex; flex-direction: column; gap: .5rem; align-items: center; }
+.toast { background: #2a2e37; border: 1px solid #3a3f4b; border-radius: 8px; padding: .5rem .9rem;
+         box-shadow: 0 4px 16px #000a; max-width: 80vw; white-space: pre-line;
+         animation: toast-in .2s ease-out; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+#ask { border: 0; border-radius: 10px; background: #1c1f26; color: #e8e8e8; padding: 1rem 1.2rem;
+       min-width: min(80vw, 340px); }
+#ask::backdrop { background: #000a; }
+#ask p { margin: 0 0 .8rem; white-space: pre-line; }
+#ask input { width: 100%; background: #2a2e37; color: inherit; border: 1px solid #3a3f4b; border-radius: 6px;
+             padding: .4rem; font: inherit; margin-bottom: .8rem; }
+#ask footer { display: flex; gap: .6rem; justify-content: flex-end; }
+#ask button { background: #2a2e37; color: inherit; border: 1px solid #3a3f4b; border-radius: 6px;
+              padding: .35rem .9rem; font: inherit; cursor: pointer; }
+#ask #ask-ok { border-color: #4a9eff; }
+</style>
+<script>
+function toast(msg, ms) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.getElementById('toasts').append(t);
+  setTimeout(() => t.remove(), ms || 4000);
+}
+function reloadWithToast(msg) {  // survive the reload, then show
+  sessionStorage.setItem('toast', msg);
+  location.reload();
+}
+{
+  const pending = sessionStorage.getItem('toast');
+  if (pending) { sessionStorage.removeItem('toast'); toast(pending, 6000); }
+}
+function ask(message, withInput) {  // in-page confirm/prompt; resolves true/false or string/null
+  const dlg = document.getElementById('ask');
+  const input = document.getElementById('ask-input');
+  document.getElementById('ask-msg').textContent = message;
+  input.hidden = !withInput;
+  input.value = '';
+  return new Promise(resolve => {
+    const done = val => { dlg.close(); resolve(val); };
+    document.getElementById('ask-ok').onclick = () => done(withInput ? input.value.trim() : true);
+    document.getElementById('ask-cancel').onclick = () => done(withInput ? null : false);
+    input.onkeydown = e => { if (e.key === 'Enter') done(withInput ? input.value.trim() : true); };
+    dlg.oncancel = () => resolve(withInput ? null : false);
+    dlg.showModal();
+    if (withInput) input.focus();
+  });
+}
+</script>

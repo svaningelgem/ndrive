@@ -54,18 +54,19 @@ header a { color: #4a9eff; text-decoration: none; }
 <p class="hint">The pre-selected name is the model's guess — every confirmation makes the next guesses better.</p>
 {% endif %}
 
+{% include "ui.html" %}
 <script>
 async function save(btn) {
   const card = btn.closest('.face');
   let label = card.querySelector('select').value;
-  if (!label) { alert('Pick a name first.'); return; }
+  if (!label) { toast('Pick a name first.'); return; }
   if (label === '__new__') {
-    label = (prompt('Name of this person:') || '').trim();
+    label = ((await ask('Name of this person:', true)) || '').trim();
     if (!label) return;
   }
   const r = await fetch('/api/face', {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify({face_id: +card.dataset.id, label})});
-  if (!r.ok) { alert('Could not save.'); return; }
+  if (!r.ok) { toast('Could not save.'); return; }
   card.remove();
   if (!document.querySelector('.face')) location.reload();  // fetch the next batch
 }
