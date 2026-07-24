@@ -197,6 +197,7 @@ def test_heic_rendition(client: TestClient) -> None:
     core.index_file("alice/h.heic")
     with core.db() as con:
         assert con.execute("SELECT phash FROM photos WHERE path='alice/h.heic'").fetchone()[0]
+    assert list((core.CACHE / "img").glob("*.jpg"))  # gallery thumb pre-written during indexing
     out = core.rendition("alice/h.heic", core.THUMB_SIDE)
     with Image.open(out) as thumb:
         assert thumb.format == "JPEG"

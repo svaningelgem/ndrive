@@ -12,7 +12,6 @@ import logging
 import os
 import shutil
 import sqlite3
-import subprocess
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -26,10 +25,9 @@ register_heif_opener()
 log = logging.getLogger("ndrive")
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".heic", ".heif"}
-HEIC_EXTS = {".heic", ".heif"}
 PHASH_DUP_DISTANCE = 6  # hamming distance on the 64-bit phash; bursts may trip this — we warn, never block
 EXIF_DT_ORIGINAL, EXIF_DT, EXIF_DT_DIGITIZED, EXIF_IFD = 36867, 306, 36868, 0x8769
-THUMB_SIDE = 320  # ≤ the preview embedded in HEICs, so gallery thumbs never need a full decode
+THUMB_SIDE = 320
 VIEW_SIDE = 2048
 
 HOME: Path = Path()
@@ -151,6 +149,10 @@ def index_file(rel: str) -> list[str]:
             width, height = img.size
             taken = _taken_at(img, st.st_mtime)
             phash = str(imagehash.phash(img))
+            # we paid for the full decode (HEICs are expensive) — write the gallery thumb now, for free
+            thumb = _rendition_path(rel, st.st_mtime, THUMB_SIDE)
+            if not thumb.exists():
+                _write_rendition(img, thumb, THUMB_SIDE)
     except Exception as exc:  # noqa: BLE001 — corrupt or half-uploaded: keep it listed, unhashed
         log.warning(f"cannot read image {rel}: {exc}")
     dups = _near_duplicates(phash, rel)
@@ -288,42 +290,29 @@ def list_photos(me: str, owner: str | None = None, sort: str = "desc") -> list[d
 # --- renditions ------------------------------------------------------------
 
 
+def _rendition_path(rel: str, mtime: float, max_side: int) -> Path:
+    key = hashlib.sha1(f"{rel}:{mtime}:{max_side}".encode()).hexdigest()
+    return CACHE / "img" / f"{key}.jpg"
+
+
+def _write_rendition(img: Image.Image, out: Path, max_side: int) -> None:
+    img = ImageOps.exif_transpose(img)
+    img.thumbnail((max_side, max_side))
+    img.convert("RGB").save(out, "JPEG", quality=85)
+
+
 def rendition(rel: str, max_side: int) -> Path:
-    """Cached JPEG rendition (thumb or view size); this is also how HEIC becomes browser-viewable."""
-    abs_ = resolve(rel)
-    key = hashlib.sha1(f"{rel}:{abs_.stat().st_mtime}:{max_side}".encode()).hexdigest()
-    out = CACHE / "img" / f"{key}.jpg"
-    if not out.exists() and not _heic_fast_thumb(abs_, out, max_side):
-        with Image.open(abs_) as img:
-            img = ImageOps.exif_transpose(img)
-            img.thumbnail((max_side, max_side))
-            img.convert("RGB").save(out, "JPEG", quality=85)
-    return out
+    """Cached JPEG rendition (thumb or view size); this is also how HEIC becomes browser-viewable.
 
-
-def _heic_fast_thumb(src: Path, out: Path, max_side: int) -> bool:
-    """heif-thumbnailer extracts the preview embedded in a HEIC instead of decoding the full image.
-
-    Ported from the papa_fotos gallery; only valid up to the embedded preview's size (~320px).
-    Falls back to a full Pillow decode when the tool is missing or the file has no usable preview.
+    Gallery thumbs are normally pre-written by index_file; this decodes on demand for
+    view-size requests and cache misses.
     """
-    if src.suffix.lower() not in HEIC_EXTS or max_side > THUMB_SIDE:
-        return False
-    tmp = out.with_suffix(".tmp.png")  # heif-thumbnailer picks its output format from the extension
-    try:
-        subprocess.run(
-            ["heif-thumbnailer", "-s", str(max_side), str(src), str(tmp)],
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-        with Image.open(tmp) as img:
-            img.convert("RGB").save(out, "JPEG", quality=85)
-        return True
-    except (OSError, subprocess.SubprocessError):
-        return False
-    finally:
-        tmp.unlink(missing_ok=True)
+    abs_ = resolve(rel)
+    out = _rendition_path(rel, abs_.stat().st_mtime, max_side)
+    if not out.exists():
+        with Image.open(abs_) as img:
+            _write_rendition(img, out, max_side)
+    return out
 
 
 def unique_dest(parent_rel: str, filename: str) -> str:
