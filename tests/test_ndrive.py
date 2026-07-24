@@ -112,6 +112,42 @@ def test_duplicates_review_page(client: TestClient) -> None:
         assert con.execute("SELECT dup_of FROM photos WHERE path='alice/b.jpg'").fetchone()[0] is None
 
 
+def test_keep_both_resolves_pair(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", gradient_jpeg((128, 96)), "image/jpeg"))])
+    client.post("/api/upload", auth=BOB, files=[("files", ("b.jpg", gradient_jpeg((100, 75)), "image/jpeg"))])
+    assert len(core.duplicate_pairs()) == 1  # duplicates are detected across accounts
+
+    r = client.post("/api/keep-both", auth=BOB, json={"path": "bob/b.jpg"})
+    assert r.status_code == 200
+    assert core.duplicate_pairs() == []
+    with core.db() as con:  # both photos still exist
+        assert con.execute("SELECT COUNT(*) FROM photos").fetchone()[0] == 2
+
+
+def test_default_sort_is_oldest_first(client: TestClient) -> None:
+    old = jpeg_bytes((1, 1, 1), taken="2026:07:01 08:00:00")
+    new = jpeg_bytes((2, 2, 2), taken="2026:07:09 08:00:00")
+    client.post("/api/upload", auth=ALICE, files=[("files", ("new.jpg", new, "image/jpeg"))])
+    client.post("/api/upload", auth=ALICE, files=[("files", ("old.jpg", old, "image/jpeg"))])
+    html = client.get("/", auth=ALICE).text
+    assert html.index("alice/old.jpg") < html.index("alice/new.jpg")
+
+
+def test_rename_user(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((4, 5, 6)), "image/jpeg"))])
+    client.post("/api/like", auth=BOB, json={"path": "alice/a.jpg"})
+    _insert_face("alice/a.jpg", "1,1,20,20", _vec(2), label="mama")
+
+    core.rename_user("alice", "alicia")
+    assert (core.DATA / "alicia/a.jpg").exists()
+    assert core.verify_user("alicia", "pw-alice")
+    assert not core.verify_user("alice", "pw-alice")
+    with core.db() as con:
+        assert con.execute("SELECT owner FROM photos WHERE path='alicia/a.jpg'").fetchone()[0] == "alicia"
+        assert con.execute("SELECT username FROM likes WHERE path='alicia/a.jpg'").fetchone()[0] == "bob"
+        assert con.execute("SELECT label FROM faces WHERE path='alicia/a.jpg'").fetchone()[0] == "mama"
+
+
 def test_distinct_photos_no_warning(client: TestClient) -> None:
     r1 = client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", gradient_jpeg((128, 96)), "image/jpeg"))])
     r2 = client.post("/api/upload", auth=BOB, files=[("files", ("b.jpg", mandel_jpeg(), "image/jpeg"))])

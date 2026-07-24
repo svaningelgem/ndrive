@@ -22,6 +22,9 @@ def main() -> None:
     serve.add_argument("--port", type=int, default=8484)
     adduser = sub.add_parser("adduser", help="create a user and their folder (re-run to reset a password)")
     adduser.add_argument("username")
+    rename = sub.add_parser("renameuser", help="rename an account; folder, photos, likes and faces follow")
+    rename.add_argument("old")
+    rename.add_argument("new")
     sub.add_parser("rescan", help="rebuild the photo index from the files on disk")
     sub.add_parser("scan-faces", help="detect + embed faces for photos not scanned yet")
     purge = sub.add_parser("purge-trash", help="permanently drop old trash")
@@ -36,6 +39,10 @@ def main() -> None:
             core.configure(args.home)
             core.add_user(args.username, getpass.getpass("Password: "))
             print(f"user {args.username} ready — folder data/{args.username}")
+        case "renameuser":
+            core.configure(args.home)
+            core.rename_user(args.old, args.new)
+            print(f"{args.old} → {args.new}")
         case "rescan":
             core.configure(args.home)
             core.scan_all()

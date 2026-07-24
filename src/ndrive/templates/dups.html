@@ -21,6 +21,9 @@ header a { color: #4a9eff; text-decoration: none; }
 .meta .path { color: #e8e8e8; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; white-space: nowrap; }
 button.del { background: #3a1d22; color: #ff8899; border: 1px solid #71333f; border-radius: 6px;
              padding: .3rem .7rem; font: inherit; cursor: pointer; margin-left: auto; }
+.keep { grid-column: 1 / -1; text-align: center; }
+.keep button { background: #1d3a24; color: #7fd191; border: 1px solid #2f6b3f; border-radius: 6px;
+               padding: .35rem .9rem; font: inherit; cursor: pointer; }
 .notyours { margin-left: auto; font-style: italic; }
 .empty { text-align: center; color: #9aa0ab; margin-top: 3rem; }
 </style>
@@ -50,6 +53,9 @@ button.del { background: #3a1d22; color: #ff8899; border: 1px solid #71333f; bor
     </figcaption>
   </figure>
   {% endfor %}
+  <div class="keep">
+    <button data-path="{{ a['path'] }}" onclick="keepBoth(this)">🤝 keep both — these are not duplicates</button>
+  </div>
 </div>
 {% endfor %}
 {% if not pairs %}<p class="empty">No duplicates flagged 🎉</p>{% endif %}
@@ -62,6 +68,11 @@ async function del(btn) {
                                         body: JSON.stringify({paths: [path]})});
   const d = await r.json();
   if (d.deleted) btn.closest('.pair').remove(); else alert(d.message);
+}
+async function keepBoth(btn) {
+  const r = await fetch('/api/keep-both', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                           body: JSON.stringify({path: btn.dataset.path})});
+  if (r.ok) btn.closest('.pair').remove();
 }
 </script>
 </body>

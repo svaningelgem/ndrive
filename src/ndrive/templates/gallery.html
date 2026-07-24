@@ -126,7 +126,8 @@ function applyFilter() {
 }
 function toggleSort() {
   const u = new URL(location);
-  u.searchParams.set('sort', u.searchParams.get('sort') === 'asc' ? 'desc' : 'asc');
+  const cur = u.searchParams.get('sort') || 'asc';
+  u.searchParams.set('sort', cur === 'asc' ? 'desc' : 'asc');
   location = u;
 }
 function toggleSel(box) {

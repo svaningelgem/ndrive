@@ -176,7 +176,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
         request: Request,
         user: str = Depends(current_user),
         owner: str | None = None,
-        sort: str = "desc",
+        sort: str = "asc",
         person: str | None = None,
     ):
         photos = core.list_photos(user, owner=owner, sort=sort, person=person)
@@ -286,6 +286,11 @@ def create_app(home: str | Path | None = None) -> FastAPI:
     def like(payload: LikePayload, user: str = Depends(current_user)):
         liked, count = core.toggle_like(user, payload.path)
         return {"liked": liked, "count": count}
+
+    @app.post("/api/keep-both")
+    def keep_both(payload: LikePayload, user: str = Depends(current_user)):
+        core.clear_dup(payload.path)
+        return {"ok": True}
 
     @app.post("/download")
     def download(user: str = Depends(current_user), paths: list[str] = Form(...)):

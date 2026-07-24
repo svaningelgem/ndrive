@@ -106,6 +106,22 @@ def verify_user(username: str, password: str) -> bool:
     return row is not None and hmac.compare_digest(_hash(password, row["salt"]), row["pw_hash"])
 
 
+def rename_user(old: str, new: str) -> None:
+    """Rename an account and its folder; photos, likes and face data follow."""
+    if not new.replace("-", "").isalnum() or new.startswith("."):
+        raise ValueError("username must be alphanumeric — it becomes the folder name")
+    if not (DATA / old).is_dir():
+        raise ValueError(f"no such user: {old}")
+    if (DATA / new).exists():
+        raise ValueError(f"{new} already exists")
+    (DATA / old).rename(DATA / new)
+    with db() as con:
+        con.execute("UPDATE users SET username=? WHERE username=?", (new, old))
+        con.execute("UPDATE likes SET username=? WHERE username=?", (new, old))
+    rename_paths(old, new)
+    verify_user.cache_clear()
+
+
 def users() -> list[str]:
     return sorted(d.name for d in DATA.iterdir() if d.is_dir())
 
@@ -353,7 +369,13 @@ def toggle_like(username: str, rel: str) -> tuple[bool, int]:
     return not removed, count
 
 
-def list_photos(me: str, owner: str | None = None, sort: str = "desc", person: str | None = None) -> list[dict]:
+def clear_dup(rel: str) -> None:
+    """'Keep both' on the duplicates page: the pair was a legitimate near-match."""
+    with db() as con:
+        con.execute("UPDATE photos SET dup_of=NULL WHERE path=?", (rel,))
+
+
+def list_photos(me: str, owner: str | None = None, sort: str = "asc", person: str | None = None) -> list[dict]:
     conditions = []
     if owner:
         conditions.append("p.owner = :owner")
