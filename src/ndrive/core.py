@@ -268,16 +268,19 @@ def toggle_like(username: str, rel: str) -> tuple[bool, int]:
     return not removed, count
 
 
-def list_photos(me: str, owner: str | None = None, asc: bool = False) -> list[dict]:
+def list_photos(me: str, owner: str | None = None, sort: str = "desc") -> list[dict]:
     where = "WHERE p.owner = :owner" if owner else ""
-    order = "ASC" if asc else "DESC"
+    order = {
+        "asc": "p.taken_at ASC, p.path ASC",
+        "owner": "p.owner ASC, p.taken_at DESC, p.path DESC",  # "sort by person" until face data exists
+    }.get(sort, "p.taken_at DESC, p.path DESC")
     sql = f"""
         SELECT p.path, p.owner, p.taken_at, p.dup_of,
                COUNT(l.username) AS likes,
                COALESCE(MAX(CASE WHEN l.username = :me THEN 1 END), 0) AS liked
         FROM photos p LEFT JOIN likes l ON l.path = p.path
         {where}
-        GROUP BY p.path ORDER BY p.taken_at {order}, p.path {order}"""
+        GROUP BY p.path ORDER BY {order}"""
     with db() as con:
         return [dict(r) for r in con.execute(sql, {"me": me, "owner": owner})]
 
@@ -323,13 +326,18 @@ def _heic_fast_thumb(src: Path, out: Path, max_side: int) -> bool:
         tmp.unlink(missing_ok=True)
 
 
-def unique_dest(owner: str, filename: str) -> str:
+def unique_dest(parent_rel: str, filename: str) -> str:
     name = Path(filename).name
     if name in {"", ".", ".."}:
         name = "upload"
     stem, suffix = Path(name).stem, Path(name).suffix
     cand, i = name, 0
-    while (DATA / owner / cand).exists():
+    while (DATA / parent_rel / cand).exists():
         i += 1
         cand = f"{stem}-{i}{suffix}"
-    return f"{owner}/{cand}"
+    return f"{parent_rel}/{cand}"
+
+
+def subfolders(owner: str) -> list[str]:
+    root = DATA / owner
+    return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_dir())

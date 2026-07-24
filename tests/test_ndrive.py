@@ -149,6 +149,31 @@ def test_webdav_move_updates_index(client: TestClient) -> None:
     assert r.status_code == 403  # cross-owner move refused
 
 
+def test_mkdir_and_upload_to_folder(client: TestClient) -> None:
+    r = client.post("/api/mkdir", auth=ALICE, json={"folder": "holiday"})
+    assert r.status_code == 200
+    assert (core.DATA / "alice/holiday").is_dir()
+    assert client.post("/api/mkdir", auth=ALICE, json={"folder": "../bob"}).status_code == 400
+
+    r = client.post(
+        "/api/upload",
+        auth=ALICE,
+        data={"folder": "holiday"},
+        files=[("files", ("a.jpg", jpeg_bytes((3, 2, 1)), "image/jpeg"))],
+    )
+    assert r.status_code == 200
+    with core.db() as con:
+        assert con.execute("SELECT owner FROM photos WHERE path='alice/holiday/a.jpg'").fetchone()[0] == "alice"
+
+
+def test_sort_by_person(client: TestClient) -> None:
+    late, early = jpeg_bytes((1, 1, 1), taken="2026:07:03 10:00:00"), jpeg_bytes((2, 2, 2), taken="2026:07:01 10:00:00")
+    client.post("/api/upload", auth=BOB, files=[("files", ("b.jpg", late, "image/jpeg"))])
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", early, "image/jpeg"))])
+    assert [p["owner"] for p in core.list_photos("alice", sort="owner")] == ["alice", "bob"]
+    assert [p["owner"] for p in core.list_photos("alice", sort="desc")] == ["bob", "alice"]
+
+
 def test_taken_at_digitized_fallback(client: TestClient) -> None:
     img = Image.new("RGB", (32, 32), (7, 7, 7))
     exif = Image.Exif()

@@ -29,6 +29,12 @@ figcaption { display: flex; align-items: center; gap: .4rem; padding: .25rem .5r
 .like.on { color: #ff5470; }
 .meta { margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .empty { text-align: center; color: #9aa0ab; margin-top: 3rem; }
+body.dropping::after { content: 'drop to upload ⤵'; position: fixed; inset: 0; display: grid; place-items: center;
+  background: #4a9eff33; border: 3px dashed #4a9eff; font-size: 2rem; z-index: 9; pointer-events: none; }
+#ctx { display: none; position: fixed; z-index: 10; margin: 0; padding: 4px; list-style: none;
+       background: #2a2e37; border: 1px solid #3a3f4b; border-radius: 8px; box-shadow: 0 4px 16px #000a; }
+#ctx li { padding: .45rem .9rem; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+#ctx li:hover { background: #4a9eff33; }
 dialog { border: 0; border-radius: 10px; background: #1c1f26; color: inherit; max-width: 94vw; padding: .6rem; }
 dialog::backdrop { background: #000c; }
 dialog img { max-width: 90vw; max-height: 82vh; display: block; margin: auto; }
@@ -48,9 +54,20 @@ dialog a { color: #4a9eff; }
   <span id="selinfo"></span>
   <button id="dl" disabled onclick="downloadSel()">download zip</button>
   <button id="del" disabled onclick="deleteSel()">delete</button>
+  <select id="folderSel" title="upload destination">
+    <option value="">📁 {{ user }}/</option>
+    {% for f in my_folders %}<option value="{{ f }}">📁 {{ user }}/{{ f }}</option>{% endfor %}
+  </select>
   <label class="btn">upload<input id="up" type="file" accept="image/*,.heic,.heif" multiple hidden></label>
   <span>{{ user }}</span>
 </header>
+
+<menu id="ctx">
+  <li onclick="ctxDo(() => document.getElementById('up').click())">📤 upload file(s)</li>
+  <li onclick="ctxDo(newFolder)">📁 create folder</li>
+  <li onclick="ctxDo(toggleSort)">🕒 sort by date</li>
+  <li onclick="ctxDo(sortByPerson)">👤 sort by person</li>
+</menu>
 
 <div class="grid">
 {% for p in photos %}
@@ -132,13 +149,49 @@ function downloadSel() {
   form.submit();
   form.remove();
 }
-document.getElementById('up').addEventListener('change', async e => {
+const folderSel = document.getElementById('folderSel');
+const ctx = document.getElementById('ctx');
+
+async function uploadFiles(files) {
+  if (!files.length) return;
+  document.getElementById('selinfo').textContent = 'uploading ' + files.length + '…';
   const fd = new FormData();
-  for (const f of e.target.files) fd.append('files', f);
+  fd.append('folder', folderSel.value);
+  for (const f of files) fd.append('files', f);
   const r = await fetch('/api/upload', {method: 'POST', body: fd});
   const d = await r.json();
   if (d.warnings.length) alert('Uploaded, but:\n' + d.warnings.join('\n'));
   location.reload();
+}
+async function newFolder() {
+  const name = prompt('New folder name (inside {{ user }}/):');
+  if (!name) return;
+  const r = await fetch('/api/mkdir', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                       body: JSON.stringify({folder: name})});
+  const d = await r.json();
+  if (!r.ok) { alert(d.detail || 'Invalid folder name'); return; }
+  folderSel.add(new Option('📁 {{ user }}/' + d.folder, d.folder, true, true));
+}
+function sortByPerson() {
+  const u = new URL(location);
+  u.searchParams.set('sort', 'owner');
+  location = u;
+}
+function ctxDo(fn) { ctx.style.display = 'none'; fn(); }
+addEventListener('contextmenu', e => {
+  e.preventDefault();
+  ctx.style.display = 'block';
+  ctx.style.left = Math.min(e.clientX, innerWidth - ctx.offsetWidth - 8) + 'px';
+  ctx.style.top = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 8) + 'px';
+});
+addEventListener('click', () => { ctx.style.display = 'none'; });
+document.getElementById('up').addEventListener('change', e => uploadFiles([...e.target.files]));
+addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dropping'); });
+addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+addEventListener('drop', e => {
+  e.preventDefault();
+  document.body.classList.remove('dropping');
+  uploadFiles([...e.dataTransfer.files]);
 });
 function openLb(i) {
   lbIndex = i;

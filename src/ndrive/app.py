@@ -42,6 +42,10 @@ class LikePayload(BaseModel):
     path: str
 
 
+class MkdirPayload(BaseModel):
+    folder: str
+
+
 # --- WebDAV ----------------------------------------------------------------
 
 
@@ -164,7 +168,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def gallery(request: Request, user: str = Depends(current_user), owner: str | None = None, sort: str = "desc"):
-        photos = core.list_photos(user, owner=owner, asc=sort == "asc")
+        photos = core.list_photos(user, owner=owner, sort=sort)
         return templates.TemplateResponse(
             request,
             "gallery.html",
@@ -174,6 +178,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 "owners": core.users(),
                 "owner": owner or "",
                 "sort": sort,
+                "my_folders": core.subfolders(user),
                 "paths_json": json.dumps([p["path"] for p in photos]),
             },
         )
@@ -193,11 +198,23 @@ def create_app(home: str | Path | None = None) -> FastAPI:
             raise HTTPException(404)
         return FileResponse(abs_, filename=abs_.name)
 
+    @app.post("/api/mkdir")
+    def mkdir(payload: MkdirPayload, user: str = Depends(current_user)):
+        folder = payload.folder.strip().strip("/")
+        rel = f"{user}/{folder}"
+        if not folder or not core.can_write(user, rel) or any(p.startswith(".") or not p for p in rel.split("/")):
+            raise HTTPException(400, "Invalid folder name")
+        core.resolve(rel).mkdir(parents=True, exist_ok=True)
+        return {"folder": folder}
+
     @app.post("/api/upload")
-    def upload(files: list[UploadFile], user: str = Depends(current_user)):
+    def upload(files: list[UploadFile], folder: str = Form(""), user: str = Depends(current_user)):
+        parent = f"{user}/{folder}".strip("/")
+        if not core.can_write(user, parent) or not core.resolve(parent).is_dir():
+            raise HTTPException(400, "Bad upload folder")
         warnings = []
         for f in files:
-            rel = core.unique_dest(user, f.filename or "upload")
+            rel = core.unique_dest(parent, f.filename or "upload")
             with core.resolve(rel).open("wb") as out:
                 shutil.copyfileobj(f.file, out)
             if dups := core.index_file(rel):
