@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ndrive — label faces</title>
+<style>
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: #14161a; color: #e8e8e8; font: 15px/1.4 system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; gap: 1rem; align-items: center;
+         padding: .6rem 1rem; background: #1c1f26; box-shadow: 0 1px 4px #0008; }
+header h1 { font-size: 1.1rem; margin: 0; }
+header a { color: #4a9eff; text-decoration: none; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 10px; }
+.face { margin: 0; background: #1c1f26; border-radius: 8px; padding: 8px; display: flex;
+        flex-direction: column; gap: .5rem; align-items: center; }
+.face img { width: 160px; height: 160px; object-fit: cover; border-radius: 8px; background: #000; }
+.face select { width: 100%; background: #2a2e37; color: inherit; border: 1px solid #3a3f4b;
+               border-radius: 6px; padding: .3rem; font: inherit; }
+.face button { width: 100%; background: #1d3a24; color: #7fd191; border: 1px solid #2f6b3f;
+               border-radius: 6px; padding: .35rem; font: inherit; cursor: pointer; }
+.hint { color: #9aa0ab; font-size: .8rem; text-align: center; }
+.empty { text-align: center; color: #9aa0ab; margin-top: 3rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🙂 who is this? ({{ total }} to label)</h1>
+  <a href="/">← back to gallery</a>
+</header>
+
+<div class="grid">
+{% for f in faces %}
+  <figure class="face" data-id="{{ f['id'] }}">
+    <a href="/view/{{ f['path'] | q }}" target="_blank" title="{{ f['path'] }}">
+      <img loading="lazy" src="/face/{{ f['id'] }}" alt="face {{ f['id'] }}">
+    </a>
+    <select>
+      <option value="" {{ 'selected' if not f['suggest'] }} disabled>— who is this? —</option>
+      {% for n in people %}<option value="{{ n }}" {{ 'selected' if n == f['suggest'] }}>{{ n }}</option>{% endfor %}
+      <option value="__new__">＋ new person…</option>
+      <option value="{{ ignore }}">🚫 not a face</option>
+    </select>
+    <button onclick="save(this)">✓ confirm</button>
+  </figure>
+{% endfor %}
+</div>
+{% if not faces %}
+<p class="empty">Nothing to label 🎉 — new faces appear here automatically after uploads.</p>
+{% else %}
+<p class="hint">The pre-selected name is the model's guess — every confirmation makes the next guesses better.</p>
+{% endif %}
+
+<script>
+async function save(btn) {
+  const card = btn.closest('.face');
+  let label = card.querySelector('select').value;
+  if (!label) { alert('Pick a name first.'); return; }
+  if (label === '__new__') {
+    label = (prompt('Name of this person:') || '').trim();
+    if (!label) return;
+  }
+  const r = await fetch('/api/face', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                      body: JSON.stringify({face_id: +card.dataset.id, label})});
+  if (!r.ok) { alert('Could not save.'); return; }
+  card.remove();
+  if (!document.querySelector('.face')) location.reload();  // fetch the next batch
+}
+</script>
+</body>
+</html>

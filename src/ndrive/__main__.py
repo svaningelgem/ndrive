@@ -7,7 +7,7 @@ import os
 
 import uvicorn
 
-from ndrive import core
+from ndrive import core, faces
 from ndrive.app import create_app
 
 
@@ -23,6 +23,7 @@ def main() -> None:
     adduser = sub.add_parser("adduser", help="create a user and their folder (re-run to reset a password)")
     adduser.add_argument("username")
     sub.add_parser("rescan", help="rebuild the photo index from the files on disk")
+    sub.add_parser("scan-faces", help="detect + embed faces for photos not scanned yet")
     purge = sub.add_parser("purge-trash", help="permanently drop old trash")
     purge.add_argument("--days", type=int, default=30)
     args = parser.parse_args()
@@ -38,6 +39,9 @@ def main() -> None:
         case "rescan":
             core.configure(args.home)
             core.scan_all()
+        case "scan-faces":
+            core.configure(args.home)
+            faces.scan_faces()
         case "purge-trash":
             core.configure(args.home)
             print(f"removed {core.purge_trash(args.days)} trash folder(s)")

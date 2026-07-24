@@ -48,6 +48,10 @@ CREATE TABLE IF NOT EXISTS photos(
     width INTEGER, height INTEGER, size INTEGER NOT NULL, mtime REAL NOT NULL, phash TEXT, dup_of TEXT);
 CREATE TABLE IF NOT EXISTS likes(
     username TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(username, path));
+CREATE TABLE IF NOT EXISTS faces(
+    id INTEGER PRIMARY KEY, path TEXT NOT NULL, bbox TEXT NOT NULL, embedding BLOB NOT NULL, label TEXT,
+    UNIQUE(path, bbox));
+CREATE TABLE IF NOT EXISTS face_scan(path TEXT PRIMARY KEY, mtime REAL NOT NULL);
 """
 
 
@@ -292,8 +296,8 @@ def index_tree(rel: str) -> None:
 
 def _forget(rel: str) -> None:
     with db() as con:
-        con.execute("DELETE FROM likes WHERE path=?", (rel,))
-        con.execute("DELETE FROM photos WHERE path=?", (rel,))
+        for table in ("likes", "photos", "faces", "face_scan"):
+            con.execute(f"DELETE FROM {table} WHERE path=?", (rel,))
         con.execute("UPDATE photos SET dup_of=NULL WHERE dup_of=?", (rel,))
 
 
@@ -308,7 +312,7 @@ def move_to_trash(rel: str) -> None:
     if "/" not in rel:  # someone trashed their whole root folder: keep an empty one so the account still works
         src.mkdir()
     with db() as con:
-        for table in ("likes", "photos"):
+        for table in ("likes", "photos", "faces", "face_scan"):
             con.execute(f"DELETE FROM {table} WHERE path=? OR path LIKE ?", (rel, rel + "/%"))
         con.execute("UPDATE photos SET dup_of=NULL WHERE dup_of=? OR dup_of LIKE ?", (rel, rel + "/%"))
 
@@ -329,10 +333,11 @@ def rename_paths(old: str, new: str) -> None:
         rows = con.execute("SELECT path FROM photos WHERE path=? OR path LIKE ?", (old, old + "/%")).fetchall()
         for r in rows:
             np = new + r["path"][len(old) :]
-            for table in ("likes", "photos"):
-                con.execute(f"DELETE FROM {table} WHERE path=?", (np,))  # MOVE with Overwrite
+            con.execute("DELETE FROM photos WHERE path=?", (np,))  # MOVE with Overwrite
             con.execute("UPDATE photos SET path=?, owner=? WHERE path=?", (np, np.split("/")[0], r["path"]))
-            con.execute("UPDATE likes SET path=? WHERE path=?", (np, r["path"]))
+            for table in ("likes", "faces", "face_scan"):
+                con.execute(f"DELETE FROM {table} WHERE path=?", (np,))
+                con.execute(f"UPDATE {table} SET path=? WHERE path=?", (np, r["path"]))
             con.execute("UPDATE photos SET dup_of=? WHERE dup_of=?", (np, r["path"]))
 
 
@@ -348,8 +353,13 @@ def toggle_like(username: str, rel: str) -> tuple[bool, int]:
     return not removed, count
 
 
-def list_photos(me: str, owner: str | None = None, sort: str = "desc") -> list[dict]:
-    where = "WHERE p.owner = :owner" if owner else ""
+def list_photos(me: str, owner: str | None = None, sort: str = "desc", person: str | None = None) -> list[dict]:
+    conditions = []
+    if owner:
+        conditions.append("p.owner = :owner")
+    if person:
+        conditions.append("p.path IN (SELECT path FROM faces WHERE label = :person)")
+    where = "WHERE " + " AND ".join(conditions) if conditions else ""
     order = {
         "asc": "p.taken_at ASC, p.path ASC",
         "owner": "p.owner ASC, p.taken_at DESC, p.path DESC",  # "sort by person" until face data exists
@@ -362,7 +372,7 @@ def list_photos(me: str, owner: str | None = None, sort: str = "desc") -> list[d
         {where}
         GROUP BY p.path ORDER BY {order}"""
     with db() as con:
-        rows = [dict(r) for r in con.execute(sql, {"me": me, "owner": owner})]
+        rows = [dict(r) for r in con.execute(sql, {"me": me, "owner": owner, "person": person})]
     for r in rows:
         r["video"] = Path(r["path"]).suffix.lower() in VIDEO_EXTS
     return rows

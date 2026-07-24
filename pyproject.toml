@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["httpx", "pytest", "pytest-mock", "ruff"]
+faces = ["insightface", "onnxruntime", "opencv-python-headless"]
 
 [project.scripts]
 ndrive = "ndrive.__main__:main"

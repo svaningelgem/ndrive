@@ -4,11 +4,12 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from ndrive import core
+from ndrive import core, faces
 from ndrive.app import create_app
 
 ALICE = ("alice", "pw-alice")
@@ -263,3 +264,69 @@ def test_heic_rendition(client: TestClient) -> None:
     with Image.open(out) as thumb:
         assert thumb.format == "JPEG"
         assert max(thumb.size) <= core.THUMB_SIDE
+
+
+def _vec(hot: int) -> bytes:
+    v = np.zeros(512, dtype=np.float32)
+    v[hot] = 1.0
+    return v.tobytes()
+
+
+def _insert_face(path: str, bbox: str, embedding: bytes, label: str | None = None) -> int:
+    with core.db() as con:
+        cur = con.execute(
+            "INSERT INTO faces(path, bbox, embedding, label) VALUES(?,?,?,?)", (path, bbox, embedding, label)
+        )
+        return cur.lastrowid
+
+
+def test_face_labeling_flow(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((90, 60, 30)), "image/jpeg"))])
+    _insert_face("alice/a.jpg", "1,1,20,20", _vec(0), label="mama")
+    near = _insert_face("alice/a.jpg", "5,5,30,30", _vec(0))  # same direction as mama's centroid
+    far = _insert_face("alice/a.jpg", "30,10,60,40", _vec(1))  # orthogonal — no guess
+
+    guesses = {f["id"]: f["suggest"] for f in faces.unlabeled()}
+    assert guesses == {near: "mama", far: None}
+
+    html = client.get("/faces", auth=BOB).text
+    assert f"/face/{near}" in html
+    assert "selected>mama" in html  # the model's guess comes pre-selected
+
+    crop = client.get(f"/face/{near}", auth=BOB)
+    assert crop.status_code == 200
+    with Image.open(io.BytesIO(crop.content)) as im:
+        assert im.format == "JPEG"
+
+    r = client.post("/api/face", auth=ALICE, json={"face_id": near, "label": "mama"})
+    assert r.status_code == 200
+    r = client.post("/api/face", auth=ALICE, json={"face_id": far, "label": "papa"})
+    assert faces.people() == ["mama", "papa"]
+    assert r.json()["remaining"] == 0
+
+    # gallery filter by person
+    assert "alice/a.jpg" in client.get("/?person=mama", auth=BOB).text
+    client.post("/api/upload", auth=BOB, files=[("files", ("b.jpg", mandel_jpeg(), "image/jpeg"))])
+    photos = core.list_photos("bob", person="mama")
+    assert [p["path"] for p in photos] == ["alice/a.jpg"]
+
+
+def test_scan_faces_with_mocked_model(client: TestClient, mocker) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((10, 20, 30)), "image/jpeg"))])
+
+    class FakeFace:
+        bbox = np.array([2.0, 2.0, 30.0, 30.0])
+        normed_embedding = np.ones(512, dtype=np.float32) / np.sqrt(512)
+
+    analyzer = mocker.MagicMock()
+    analyzer.get.return_value = [FakeFace()]
+    mocker.patch.object(faces, "FaceAnalysis", object())  # pretend the ML stack is installed
+    mocker.patch.object(faces, "_get_analyzer", return_value=analyzer)
+
+    faces.scan_faces()
+    with core.db() as con:
+        assert con.execute("SELECT COUNT(*) FROM faces").fetchone()[0] == 1
+        assert con.execute("SELECT COUNT(*) FROM face_scan").fetchone()[0] == 1
+
+    faces.scan_faces()  # unchanged photo → not scanned again
+    assert analyzer.get.call_count == 1

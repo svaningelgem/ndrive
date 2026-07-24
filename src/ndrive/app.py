@@ -21,7 +21,7 @@ from wsgidav.dc.base_dc import BaseDomainController
 from wsgidav.fs_dav_provider import FilesystemProvider
 from wsgidav.wsgidav_app import WsgiDAVApp
 
-from ndrive import core
+from ndrive import core, faces
 
 security = HTTPBasic()
 DAV_PREFIX = "/dav"
@@ -44,6 +44,11 @@ class LikePayload(BaseModel):
 
 class MkdirPayload(BaseModel):
     folder: str
+
+
+class FaceLabelPayload(BaseModel):
+    face_id: int
+    label: str
 
 
 # --- WebDAV ----------------------------------------------------------------
@@ -167,8 +172,14 @@ def create_app(home: str | Path | None = None) -> FastAPI:
     templates.env.filters["q"] = lambda value: quote(str(value))
 
     @app.get("/", response_class=HTMLResponse)
-    def gallery(request: Request, user: str = Depends(current_user), owner: str | None = None, sort: str = "desc"):
-        photos = core.list_photos(user, owner=owner, sort=sort)
+    def gallery(
+        request: Request,
+        user: str = Depends(current_user),
+        owner: str | None = None,
+        sort: str = "desc",
+        person: str | None = None,
+    ):
+        photos = core.list_photos(user, owner=owner, sort=sort, person=person)
         return templates.TemplateResponse(
             request,
             "gallery.html",
@@ -180,6 +191,9 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 "sort": sort,
                 "my_folders": core.subfolders(user),
                 "dup_count": len(core.duplicate_pairs()),
+                "people": faces.people(),
+                "person": person or "",
+                "unlabeled_count": faces.unlabeled_count(),
                 "paths_json": json.dumps([p["path"] for p in photos]),
             },
         )
@@ -187,6 +201,34 @@ def create_app(home: str | Path | None = None) -> FastAPI:
     @app.get("/duplicates", response_class=HTMLResponse)
     def duplicates(request: Request, user: str = Depends(current_user)):
         return templates.TemplateResponse(request, "dups.html", {"user": user, "pairs": core.duplicate_pairs()})
+
+    @app.get("/faces", response_class=HTMLResponse)
+    def faces_page(request: Request, user: str = Depends(current_user)):
+        return templates.TemplateResponse(
+            request,
+            "faces.html",
+            {
+                "user": user,
+                "faces": faces.unlabeled(),
+                "people": faces.people(),
+                "total": faces.unlabeled_count(),
+                "ignore": faces.IGNORE,
+            },
+        )
+
+    @app.get("/face/{face_id}")
+    def face_crop(face_id: int, user: str = Depends(current_user)):
+        try:
+            return FileResponse(faces.crop(face_id))
+        except FileNotFoundError as exc:
+            raise HTTPException(404) from exc
+
+    @app.post("/api/face")
+    def face_label(payload: FaceLabelPayload, user: str = Depends(current_user)):
+        if not payload.label.strip():
+            raise HTTPException(400, "Empty label")
+        faces.set_label(payload.face_id, payload.label)
+        return {"remaining": faces.unlabeled_count()}
 
     @app.get("/thumb/{rel:path}")
     def thumb(rel: str, user: str = Depends(current_user)):
@@ -256,5 +298,9 @@ def create_app(home: str | Path | None = None) -> FastAPI:
         tmp.close()
         return FileResponse(tmp.name, filename="ndrive-selection.zip", background=BackgroundTask(os.unlink, tmp.name))
 
-    threading.Thread(target=core.scan_all, daemon=True, name="ndrive-scan").start()
+    def _startup_scan():
+        core.scan_all()
+        faces.scan_faces()
+
+    threading.Thread(target=_startup_scan, daemon=True, name="ndrive-scan").start()
     return app

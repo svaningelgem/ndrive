@@ -7,6 +7,7 @@
 <style>
 :root { color-scheme: dark; }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: #14161a; color: #e8e8e8; font: 15px/1.4 system-ui, sans-serif; }
 header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center;
          padding: .6rem 1rem; background: #1c1f26; box-shadow: 0 1px 4px #0008; }
@@ -52,7 +53,14 @@ dialog a { color: #4a9eff; }
     {% for o in owners %}<option value="{{ o }}" {{ 'selected' if o == owner }}>{{ o }}</option>{% endfor %}
   </select>
   <button onclick="toggleSort()">date {{ '↑' if sort == 'asc' else '↓' }}</button>
+  {% if people %}
+  <select id="personSel" onchange="applyPerson()">
+    <option value="">any face</option>
+    {% for n in people %}<option value="{{ n }}" {{ 'selected' if n == person }}>{{ n }}</option>{% endfor %}
+  </select>
+  {% endif %}
   {% if dup_count %}<a class="btn" href="/duplicates" style="text-decoration:none">🔁 {{ dup_count }} dup{{ 's' if dup_count > 1 }}</a>{% endif %}
+  {% if unlabeled_count %}<a class="btn" href="/faces" style="text-decoration:none">🙂 {{ unlabeled_count }} faces</a>{% endif %}
   <span class="grow"></span>
   <span id="selinfo"></span>
   <button id="dl" disabled onclick="downloadSel()">download zip</button>
@@ -71,6 +79,7 @@ dialog a { color: #4a9eff; }
   <li onclick="ctxDo(toggleSort)">🕒 sort by date</li>
   <li onclick="ctxDo(sortByPerson)">👤 sort by person</li>
   <li onclick="ctxDo(() => location = '/duplicates')">🔁 review duplicates</li>
+  <li onclick="ctxDo(() => location = '/faces')">🙂 label faces</li>
 </menu>
 
 <div class="grid">
@@ -195,6 +204,12 @@ function sortByPerson() {
   u.searchParams.set('sort', 'owner');
   location = u;
 }
+function applyPerson() {
+  const p = document.getElementById('personSel').value;
+  const u = new URL(location);
+  p ? u.searchParams.set('person', p) : u.searchParams.delete('person');
+  location = u;
+}
 function ctxDo(fn) { ctx.style.display = 'none'; fn(); }
 addEventListener('contextmenu', e => {
   e.preventDefault();
@@ -224,6 +239,7 @@ function openLb(i) {
   } else {
     vid.pause();
     vid.removeAttribute('src');
+    img.removeAttribute('src');  // blank at once — never show the previous picture while this one loads
     img.src = '/view/' + q(path);
   }
   document.getElementById('lbmeta').textContent = path;
