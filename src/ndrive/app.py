@@ -140,10 +140,12 @@ def _guarded(dav_app):
         if seen.get("status", "").startswith("2"):
             if method == "PUT":
                 core.index_file(rel)
+                faces.scan_async()
             elif method == "MOVE":
                 core.rename_paths(rel, _dest_rel(environ))
             elif method == "COPY":
                 core.index_tree(_dest_rel(environ))
+                faces.scan_async()
         return chunks
 
     return app
@@ -281,6 +283,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 shutil.copyfileobj(f.file, out)
             if dups := core.index_file(rel):
                 warnings.append(f"{Path(rel).name} looks like a duplicate of: {', '.join(dups)}")
+        faces.scan_async()
         return {"count": len(files), "warnings": warnings}
 
     @app.post("/api/delete")
@@ -322,7 +325,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
 
     def _startup_scan():
         core.scan_all()
-        faces.scan_faces()
+        faces.sweep()
         core.transcode_all()
 
     threading.Thread(target=_startup_scan, daemon=True, name="ndrive-scan").start()

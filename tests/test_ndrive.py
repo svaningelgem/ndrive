@@ -40,10 +40,12 @@ def mandel_jpeg() -> bytes:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> TestClient:
+def client(tmp_path: Path, mocker) -> TestClient:
     core.configure(tmp_path)
     core.add_user(*ALICE)
     core.add_user(*BOB)
+    # no real scan threads by default: they would outlive tmp_path and hit a deleted database
+    mocker.patch.object(faces, "scan_async")
     return TestClient(create_app(tmp_path))
 
 
@@ -438,17 +440,39 @@ def test_face_labeling_flow(client: TestClient) -> None:
     assert [p["path"] for p in photos] == ["alice/a.jpg"]
 
 
-def test_scan_faces_with_mocked_model(client: TestClient, mocker) -> None:
-    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((10, 20, 30)), "image/jpeg"))])
+class FakeFace:
+    bbox = np.array([2.0, 2.0, 30.0, 30.0])
+    normed_embedding = np.ones(512, dtype=np.float32) / np.sqrt(512)
 
-    class FakeFace:
-        bbox = np.array([2.0, 2.0, 30.0, 30.0])
-        normed_embedding = np.ones(512, dtype=np.float32) / np.sqrt(512)
 
+def fake_model(mocker, inline: bool = False):
+    """Pretend the ML stack is installed; optionally run sweeps inline instead of threaded."""
     analyzer = mocker.MagicMock()
     analyzer.get.return_value = [FakeFace()]
-    mocker.patch.object(faces, "FaceAnalysis", object())  # pretend the ML stack is installed
+    mocker.patch.object(faces, "FaceAnalysis", object())
     mocker.patch.object(faces, "_get_analyzer", return_value=analyzer)
+    if inline:
+        mocker.patch.object(faces, "scan_async", side_effect=faces.sweep)
+    return analyzer
+
+
+def test_upload_triggers_face_scan(client: TestClient, mocker) -> None:
+    """Regression: face scanning used to run only at startup, so uploads were never scanned."""
+    fake_model(mocker, inline=True)
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((10, 20, 30)), "image/jpeg"))])
+    with core.db() as con:
+        assert con.execute("SELECT COUNT(*) FROM faces WHERE path='alice/a.jpg'").fetchone()[0] == 1
+    assert faces.pending_count() == 0
+
+    client.put("/dav/alice/x.jpg", auth=ALICE, content=jpeg_bytes((40, 50, 60)))  # same for the drive
+    with core.db() as con:
+        assert con.execute("SELECT COUNT(*) FROM faces WHERE path='alice/x.jpg'").fetchone()[0] == 1
+
+
+def test_scan_faces_with_mocked_model(client: TestClient, mocker) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((10, 20, 30)), "image/jpeg"))])
+    analyzer = fake_model(mocker)
+    assert faces.pending_count() == 1
 
     faces.scan_faces()
     with core.db() as con:

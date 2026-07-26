@@ -6,6 +6,7 @@ to those means. Every confirmed label immediately improves future suggestions.
 """
 
 import logging
+import threading
 from pathlib import Path
 
 import numpy as np
@@ -41,18 +42,54 @@ def _get_analyzer():
     return _analyzer
 
 
+_scan_lock = threading.Lock()  # ponytail: one sweep at a time — insightface is CPU-hungry and shares the box
+_rescan = threading.Event()
+
+
+def _todo() -> list[tuple[str, float]]:
+    with core.db() as con:
+        done = {r["path"]: r["mtime"] for r in con.execute("SELECT path, mtime FROM face_scan")}
+        return [
+            (r["path"], r["mtime"])
+            for r in con.execute("SELECT path, mtime FROM photos")
+            if Path(r["path"]).suffix.lower() in core.IMAGE_EXTS and done.get(r["path"]) != r["mtime"]
+        ]
+
+
+def pending_count() -> int:
+    return len(_todo())
+
+
+def scan_async() -> None:
+    """Fire-and-forget sweep, called after uploads."""
+    threading.Thread(target=sweep, daemon=True, name="ndrive-faces").start()
+
+
+def sweep() -> None:
+    """Scan everything pending, one sweep at a time.
+
+    Repeats only when another upload arrived mid-sweep — never loops on `pending_count`,
+    which would spin forever on a photo that can't be scanned (corrupt file, no ML stack).
+    """
+    if not _scan_lock.acquire(blocking=False):
+        _rescan.set()  # a sweep is running: ask it for one more pass so our upload isn't missed
+        return
+    try:
+        while True:
+            _rescan.clear()
+            scan_faces()
+            if not _rescan.is_set():
+                return
+    finally:
+        _scan_lock.release()
+
+
 def scan_faces() -> None:
     """Detect + embed faces for photos not scanned yet (or changed since)."""
     if FaceAnalysis is None:
         log.warning("insightface not installed — face scanning disabled")
         return
-    with core.db() as con:
-        done = {r["path"]: r["mtime"] for r in con.execute("SELECT path, mtime FROM face_scan")}
-        todo = [
-            (r["path"], r["mtime"])
-            for r in con.execute("SELECT path, mtime FROM photos")
-            if Path(r["path"]).suffix.lower() in core.IMAGE_EXTS and done.get(r["path"]) != r["mtime"]
-        ]
+    todo = _todo()
     for rel, mtime in todo:
         try:
             _scan_one(rel, mtime)
