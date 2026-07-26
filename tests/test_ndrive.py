@@ -526,6 +526,9 @@ def test_labeling_page_groups_by_suggested_person(client: TestClient) -> None:
     html = client.get("/faces", auth=BOB).text
     assert "✓ confirm all 2" in html  # one click confirms the whole block, each with its own dropdown
     assert html.index("probably <b>mama") < html.index("probably <b>papa")  # people come alphabetically
+    # the bulk "someone unknown" helper belongs only to the block with no guess
+    assert html.count("set the rest to someone unknown") == 1
+    assert html.index("no idea yet") < html.index("set the rest to someone unknown")
 
 
 class FakeAnalyzer:

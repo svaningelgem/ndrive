@@ -46,6 +46,11 @@ header a { color: #4a9eff; text-decoration: none; }
     {% else %}
       no idea yet <span class="count">({{ g['faces'] | length }})</span>
     {% endif %}
+    {% if not g['suggest'] %}
+    <button onclick="fillBlanks(this, '{{ stranger }}')" title="only fills the ones you have not set yourself">
+      👥 set the rest to someone unknown
+    </button>
+    {% endif %}
     <button onclick="confirmGroup(this)">✓ confirm all {{ g['faces'] | length }}</button>
   </h2>
   <div class="grid">
@@ -101,6 +106,19 @@ function drop(card) {
   if (group && !group.querySelector('.face')) group.remove();
   if (!document.querySelector('.face')) location.reload();  // fetch the next batch
 }
+function fillBlanks(btn, label) {
+  // staging only: nothing is saved until "confirm all", and anything you already picked is left alone
+  let filled = 0;
+  for (const card of btn.closest('.group').querySelectorAll('.face')) {
+    const sel = card.querySelector('select');
+    if (sel.value === (sel.dataset.suggest || '')) {  // still untouched
+      sel.value = label;
+      filled++;
+    }
+  }
+  toast(filled ? `${filled} set to "${label}" — press “✓ confirm all” to save` : 'You already set them all.');
+}
+
 async function confirmGroup(btn) {
   // each card is saved with whatever ITS dropdown says, so corrections you made are kept
   const cards = [...btn.closest('.group').querySelectorAll('.face')];
