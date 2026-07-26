@@ -233,8 +233,8 @@ def unlabeled(limit: int = 30) -> list[dict]:
             if sim >= SUGGEST_MIN_SIM and sim - runner_up >= SUGGEST_MARGIN:
                 suggest = best
         scored.append({"id": r["id"], "path": r["path"], "suggest": suggest, "score": sim})
-    # named blocks first (surest name, surest face), the "no idea" ones last
-    scored.sort(key=lambda f: (f["suggest"] is None, f["suggest"] or "", -f["score"]))
+    # people alphabetically (surest face first within each), the "no idea" ones last
+    scored.sort(key=lambda f: (f["suggest"] is None, (f["suggest"] or "").lower(), -f["score"]))
     return scored[:limit]
 
 

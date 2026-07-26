@@ -498,7 +498,8 @@ def test_labeling_page_groups_by_suggested_person(client: TestClient) -> None:
     assert [f["id"] for f in groups[2]["faces"]] == [unknown]
 
     html = client.get("/faces", auth=BOB).text
-    assert "all 2 are mama" in html  # one click confirms the whole block
+    assert "✓ confirm all 2" in html  # one click confirms the whole block, each with its own dropdown
+    assert html.index("probably <b>mama") < html.index("probably <b>papa")  # people come alphabetically
 
 
 class FakeAnalyzer:

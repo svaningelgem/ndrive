@@ -43,10 +43,10 @@ header a { color: #4a9eff; text-decoration: none; }
   <h2>
     {% if g['suggest'] %}
       probably <b>{{ g['suggest'] }}</b> <span class="count">({{ g['faces'] | length }})</span>
-      <button onclick="confirmGroup(this, '{{ g['suggest'] }}')">✓ all {{ g['faces'] | length }} are {{ g['suggest'] }}</button>
     {% else %}
       no idea yet <span class="count">({{ g['faces'] | length }})</span>
     {% endif %}
+    <button onclick="confirmGroup(this)">✓ confirm all {{ g['faces'] | length }}</button>
   </h2>
   <div class="grid">
   {% for f in g['faces'] %}
@@ -95,16 +95,24 @@ function drop(card) {
   if (group && !group.querySelector('.face')) group.remove();
   if (!document.querySelector('.face')) location.reload();  // fetch the next batch
 }
-async function confirmGroup(btn, label) {
+async function confirmGroup(btn) {
+  // each card is saved with whatever ITS dropdown says, so corrections you made are kept
   const cards = [...btn.closest('.group').querySelectorAll('.face')];
+  const ready = cards.filter(c => {
+    const v = c.querySelector('select').value;
+    return v && v !== '__new__';  // blank or "new person" needs the individual ✓ confirm
+  });
+  if (!ready.length) { toast('Pick a name on at least one face first.'); return; }
   btn.disabled = true;
-  const results = await Promise.all(cards.map(c =>
+  const results = await Promise.all(ready.map(c =>
     fetch('/api/face', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({face_id: +c.dataset.id, label})})
+                        body: JSON.stringify({face_id: +c.dataset.id, label: c.querySelector('select').value})})
       .then(r => r.ok ? c : null).catch(() => null)));
   const done = results.filter(Boolean);
   done.forEach(drop);
-  toast(`${done.length} face(s) confirmed as ${label}` + (done.length < cards.length ? ' — some failed' : ''));
+  btn.disabled = false;
+  const left = cards.length - done.length;
+  toast(`${done.length} face(s) confirmed` + (left ? ` — ${left} left, they need a name` : ''));
 }
 </script>
 </body>
