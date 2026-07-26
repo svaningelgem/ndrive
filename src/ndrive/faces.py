@@ -35,6 +35,9 @@ LOAD_MAX_SIDE = 6000  # only a memory guard for absurd images; normal photos are
 SUGGEST_MIN_SIM = 0.40
 SUGGEST_MARGIN = 0.05  # and the runner-up must be clearly behind, else we ask rather than guess
 KEEP_LABEL_IOU = 0.4  # a re-detected face overlapping this much is the same face: carry its label over
+# Measured on the family library: labelled faces sit at p5=64px, so 50 drops background noise
+# (6.5% of the queue) while keeping everything anyone actually bothered to name.
+MIN_FACE_PX = 50
 _analyzer = None
 
 
@@ -129,7 +132,10 @@ def _detect_and_embed(full_bgr: np.ndarray, small_bgr: np.ndarray, scale: float)
     for i in range(len(boxes)):
         if kpss is None:  # no landmarks means no alignment, and an unaligned crop embeds badly
             continue
-        det = _Det(bbox=boxes[i][:4] * scale, kps=kpss[i] * scale)  # back to original-pixel coords
+        box = boxes[i][:4] * scale  # back to original-pixel coords
+        if max(box[2] - box[0], box[3] - box[1]) < MIN_FACE_PX:
+            continue  # too small to recognise, and nobody wants to label a face in the background
+        det = _Det(bbox=box, kps=kpss[i] * scale)
         analyzer.models["recognition"].get(full_bgr, det)  # warps 112x112 out of the ORIGINAL pixels
         out.append(det)
     return out
@@ -206,24 +212,40 @@ def _centroids() -> dict[str, np.ndarray]:
 
 
 def unlabeled(limit: int = 30) -> list[dict]:
-    """Unlabeled faces with the model's best guess (nearest labeled person by cosine)."""
+    """Unlabeled faces with the model's best guess, grouped per suggested person.
+
+    Scoring every pending face (not just the page's worth) is what lets us serve them in
+    blocks of the same person: a wrong one stands out from its neighbours at a glance.
+    """
     centroids = _centroids()
     with core.db() as con:
-        rows = con.execute("SELECT id, path, embedding FROM faces WHERE label IS NULL LIMIT ?", (limit,)).fetchall()
-    out = []
+        rows = con.execute("SELECT id, path, embedding FROM faces WHERE label IS NULL").fetchall()
+    scored = []
     for r in rows:
         vec = np.frombuffer(r["embedding"], dtype=np.float32)
-        scored = sorted(((float(vec @ c), name) for name, c in centroids.items()), reverse=True)
-        suggest = None
-        if scored:
-            sim, best = scored[0]
-            runner_up = scored[1][0] if len(scored) > 1 else 0.0
+        ranked = sorted(((float(vec @ c), name) for name, c in centroids.items()), reverse=True)
+        suggest, sim = None, 0.0
+        if ranked:
+            sim, best = ranked[0]
+            runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
             # guess only when it is both confident and clearly ahead — a wrong pre-selection is
             # worse than none, because confirming it poisons the person's average
             if sim >= SUGGEST_MIN_SIM and sim - runner_up >= SUGGEST_MARGIN:
                 suggest = best
-        out.append({"id": r["id"], "path": r["path"], "suggest": suggest})
-    return out
+        scored.append({"id": r["id"], "path": r["path"], "suggest": suggest, "score": sim})
+    # named blocks first (surest name, surest face), the "no idea" ones last
+    scored.sort(key=lambda f: (f["suggest"] is None, f["suggest"] or "", -f["score"]))
+    return scored[:limit]
+
+
+def grouped(limit: int = 30) -> list[dict]:
+    """The same faces, bundled into per-person blocks for the labeling page."""
+    groups: list[dict] = []
+    for f in unlabeled(limit):
+        if not groups or groups[-1]["suggest"] != f["suggest"]:
+            groups.append({"suggest": f["suggest"], "faces": []})
+        groups[-1]["faces"].append(f)
+    return groups
 
 
 def unlabeled_count() -> int:

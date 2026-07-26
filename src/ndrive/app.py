@@ -218,7 +218,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
             "faces.html",
             {
                 "user": user,
-                "faces": faces.unlabeled(),
+                "groups": faces.grouped(),
                 "people": faces.label_options(),
                 "total": faces.unlabeled_count(),
                 "ignore": faces.IGNORE,

@@ -14,6 +14,13 @@ header { position: sticky; top: 0; z-index: 2; display: flex; gap: 1rem; align-i
 header h1 { font-size: 1.1rem; margin: 0; }
 header a { color: #4a9eff; text-decoration: none; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; padding: 10px; }
+.group { border-top: 1px solid #2a2e37; }
+.group h2 { display: flex; align-items: center; gap: .8rem; margin: 0; padding: .7rem 1rem .2rem;
+            font-size: .95rem; font-weight: 600; }
+.group h2 .count { color: #9aa0ab; font-weight: 400; font-size: .85rem; }
+.group h2 button { margin-left: auto; background: #1d3a24; color: #7fd191; border: 1px solid #2f6b3f;
+                   border-radius: 6px; padding: .3rem .8rem; font: inherit; cursor: pointer; }
+.group.unknown h2 { color: #9aa0ab; }
 .face { margin: 0; background: #1c1f26; border-radius: 8px; padding: 8px; display: flex;
         flex-direction: column; gap: .5rem; align-items: center; }
 .face img { width: 160px; height: 160px; object-fit: cover; border-radius: 8px; background: #000; }
@@ -31,27 +38,40 @@ header a { color: #4a9eff; text-decoration: none; }
   <a href="/">← back to gallery</a>
 </header>
 
-<div class="grid">
-{% for f in faces %}
-  <figure class="face" data-id="{{ f['id'] }}">
-    <a href="/view/{{ f['path'] | q }}" target="_blank" title="{{ f['path'] }}">
-      <img loading="lazy" src="/face/{{ f['id'] }}" alt="face {{ f['id'] }}">
-    </a>
-    <select>
-      <option value="" {{ 'selected' if not f['suggest'] }} disabled>— who is this? —</option>
-      {% for n in people %}<option value="{{ n }}" {{ 'selected' if n == f['suggest'] }}>{{ n }}</option>{% endfor %}
-      <option value="__new__">＋ new person…</option>
-      <option value="{{ stranger }}">👥 someone unknown</option>
-      <option value="{{ ignore }}">🚫 not a face</option>
-    </select>
-    <button onclick="save(this)">✓ confirm</button>
-  </figure>
+{% for g in groups %}
+<section class="group {{ 'unknown' if not g['suggest'] }}" data-suggest="{{ g['suggest'] or '' }}">
+  <h2>
+    {% if g['suggest'] %}
+      probably <b>{{ g['suggest'] }}</b> <span class="count">({{ g['faces'] | length }})</span>
+      <button onclick="confirmGroup(this, '{{ g['suggest'] }}')">✓ all {{ g['faces'] | length }} are {{ g['suggest'] }}</button>
+    {% else %}
+      no idea yet <span class="count">({{ g['faces'] | length }})</span>
+    {% endif %}
+  </h2>
+  <div class="grid">
+  {% for f in g['faces'] %}
+    <figure class="face" data-id="{{ f['id'] }}">
+      <a href="/view/{{ f['path'] | q }}" target="_blank" title="{{ f['path'] }}">
+        <img loading="lazy" src="/face/{{ f['id'] }}" alt="face {{ f['id'] }}">
+      </a>
+      <select>
+        <option value="" {{ 'selected' if not f['suggest'] }} disabled>— who is this? —</option>
+        {% for n in people %}<option value="{{ n }}" {{ 'selected' if n == f['suggest'] }}>{{ n }}</option>{% endfor %}
+        <option value="__new__">＋ new person…</option>
+        <option value="{{ stranger }}">👥 someone unknown</option>
+        <option value="{{ ignore }}">🚫 not a face</option>
+      </select>
+      <button onclick="save(this)">✓ confirm</button>
+    </figure>
+  {% endfor %}
+  </div>
+</section>
 {% endfor %}
-</div>
-{% if not faces %}
+{% if not groups %}
 <p class="empty">Nothing to label 🎉 — new faces appear here automatically after uploads.</p>
 {% else %}
-<p class="hint">The pre-selected name is the model's guess — every confirmation makes the next guesses better.</p>
+<p class="hint">Faces are grouped by who the model thinks they are, surest first — scan a block, fix the odd
+one out, then confirm the rest. Every confirmation makes the next guesses better.</p>
 {% endif %}
 
 {% include "ui.html" %}
@@ -67,8 +87,24 @@ async function save(btn) {
   const r = await fetch('/api/face', {method: 'POST', headers: {'Content-Type': 'application/json'},
                                       body: JSON.stringify({face_id: +card.dataset.id, label})});
   if (!r.ok) { toast('Could not save.'); return; }
+  drop(card);
+}
+function drop(card) {
+  const group = card.closest('.group');
   card.remove();
+  if (group && !group.querySelector('.face')) group.remove();
   if (!document.querySelector('.face')) location.reload();  // fetch the next batch
+}
+async function confirmGroup(btn, label) {
+  const cards = [...btn.closest('.group').querySelectorAll('.face')];
+  btn.disabled = true;
+  const results = await Promise.all(cards.map(c =>
+    fetch('/api/face', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({face_id: +c.dataset.id, label})})
+      .then(r => r.ok ? c : null).catch(() => null)));
+  const done = results.filter(Boolean);
+  done.forEach(drop);
+  toast(`${done.length} face(s) confirmed as ${label}` + (done.length < cards.length ? ' — some failed' : ''));
 }
 </script>
 </body>

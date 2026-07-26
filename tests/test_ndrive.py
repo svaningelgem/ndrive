@@ -481,6 +481,26 @@ def test_suggestion_needs_confidence_and_margin(client: TestClient) -> None:
     assert guesses[amb_id] is None  # confident but a coin flip between two people
 
 
+def test_labeling_page_groups_by_suggested_person(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((9, 9, 9)), "image/jpeg"))])
+    _insert_face("alice/a.jpg", "1,1,20,20", _vec(0), label="mama")
+    _insert_face("alice/a.jpg", "2,2,21,21", _vec(1), label="papa")
+    # two faces that look like mama, one like papa, one unrecognisable — deliberately interleaved
+    m1 = _insert_face("alice/a.jpg", "10,10,30,30", _vec(0))
+    p1 = _insert_face("alice/a.jpg", "31,10,50,30", _vec(1))
+    m2 = _insert_face("alice/a.jpg", "51,10,70,30", _vec(0))
+    unknown = _insert_face("alice/a.jpg", "71,10,90,30", _vec(7))
+
+    groups = faces.grouped()
+    assert [g["suggest"] for g in groups] == ["mama", "papa", None]  # named blocks first, unknowns last
+    assert [f["id"] for f in groups[0]["faces"]] == [m1, m2]  # the two mamas arrive together
+    assert [f["id"] for f in groups[1]["faces"]] == [p1]
+    assert [f["id"] for f in groups[2]["faces"]] == [unknown]
+
+    html = client.get("/faces", auth=BOB).text
+    assert "all 2 are mama" in html  # one click confirms the whole block
+
+
 class FakeAnalyzer:
     """Stands in for insightface: a detector and a recogniser, same call shapes as the real ones."""
 
@@ -492,7 +512,8 @@ class FakeAnalyzer:
 
     def detect(self, img: np.ndarray, max_num: int = 0, metric: str = "default"):
         self.detected_on.append(img.shape[:2])
-        return np.array([[2.0, 2.0, 30.0, 30.0, 0.99]], dtype=np.float32), np.zeros((1, 5, 2), dtype=np.float32)
+        # 56px box: comfortably above MIN_FACE_PX even when the image is not downscaled
+        return np.array([[2.0, 2.0, 58.0, 58.0, 0.99]], dtype=np.float32), np.zeros((1, 5, 2), dtype=np.float32)
 
     def get(self, img: np.ndarray, face) -> None:
         self.embedded_on.append(img.shape[:2])  # which image the crop came from is the whole point
@@ -553,4 +574,4 @@ def test_embedding_uses_full_resolution_not_the_detection_copy(client: TestClien
     with core.db() as con:
         bbox = con.execute("SELECT bbox FROM faces WHERE path='alice/big.jpg'").fetchone()[0]
     x1, y1, x2, y2 = (int(v) for v in bbox.split(","))
-    assert (x1, y1, x2, y2) == (8, 8, 117, 117)  # detector box scaled back to original coordinates
+    assert (x1, y1, x2, y2) == (8, 8, 227, 227)  # detector box scaled back to original coordinates
