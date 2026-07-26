@@ -55,7 +55,7 @@ dialog a { color: #4a9eff; }
 <body>
 <header>
   <h1>📷 ndrive</h1>
-  <select id="owner" onchange="applyFilter()">
+  <select id="owner" autocomplete="off" onchange="applyFilter()">
     <option value="{{ user }}" {{ 'selected' if owner == user }}>📁 mine</option>
     <option value="*" {{ 'selected' if owner == '*' }}>👪 everyone</option>
     {% for o in owners %}{% if o != user %}<option value="{{ o }}" {{ 'selected' if o == owner }}>{{ o }}</option>{% endif %}{% endfor %}
@@ -63,7 +63,7 @@ dialog a { color: #4a9eff; }
   <button onclick="toggleSort()">date {{ '↑' if sort == 'asc' else '↓' }}</button>
   <button class="{{ 'on' if liked }}" onclick="toggleLiked()" title="only pictures with likes">♥ liked</button>
   {% if people %}
-  <select id="personSel" onchange="applyPerson()">
+  <select id="personSel" autocomplete="off" onchange="applyPerson()">
     <option value="">any face</option>
     {% for n in people %}<option value="{{ n }}" {{ 'selected' if n == person }}>{{ n }}</option>{% endfor %}
   </select>
@@ -75,7 +75,7 @@ dialog a { color: #4a9eff; }
   <button onclick="selectAll()">select all</button>
   <button id="dl" disabled onclick="downloadSel()">download zip</button>
   <button id="del" disabled onclick="deleteSel()">delete</button>
-  <select id="folderSel" title="upload destination">
+  <select id="folderSel" autocomplete="off" title="upload destination">
     <option value="">📁 {{ user }}/</option>
     {% for f in my_folders %}<option value="{{ f }}">📁 {{ user }}/{{ f }}</option>{% endfor %}
   </select>

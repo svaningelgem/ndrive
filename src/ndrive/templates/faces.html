@@ -54,7 +54,7 @@ header a { color: #4a9eff; text-decoration: none; }
       <a href="/view/{{ f['path'] | q }}" target="_blank" title="{{ f['path'] }}">
         <img loading="lazy" src="/face/{{ f['id'] }}" alt="face {{ f['id'] }}">
       </a>
-      <select>
+      <select autocomplete="off" data-suggest="{{ f['suggest'] or '' }}">
         <option value="" {{ 'selected' if not f['suggest'] }} disabled>— who is this? —</option>
         {% for n in people %}<option value="{{ n }}" {{ 'selected' if n == f['suggest'] }}>{{ n }}</option>{% endfor %}
         <option value="__new__">＋ new person…</option>
@@ -76,6 +76,12 @@ one out, then confirm the rest. Every confirmation makes the next guesses better
 
 {% include "ui.html" %}
 <script>
+// Firefox restores <select> values across reloads BY POSITION, which would paste the previous
+// batch's names onto different faces. Always put the server's guess back.
+addEventListener('pageshow', () => {
+  for (const sel of document.querySelectorAll('.face select')) sel.value = sel.dataset.suggest || '';
+});
+
 async function save(btn) {
   const card = btn.closest('.face');
   let label = card.querySelector('select').value;
