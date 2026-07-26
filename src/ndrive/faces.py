@@ -1,8 +1,11 @@
 """Face detection, embeddings and labeling.
 
-There is no model training: pretrained insightface (buffalo_l) embeddings, a
-person = the mean of their labeled embeddings, a suggestion = cosine similarity
-to those means. Every confirmed label immediately improves future suggestions.
+There is no model training: pretrained insightface (buffalo_l) embeddings, and a
+suggestion is the cosine similarity to the *closest single face* you already
+labeled for that person. Nearest-face rather than an average, because people look
+different in profile, in sunglasses or under a hat — averaging those together
+produces a vector that matches none of them, while a new hard pose can still land
+right next to an earlier hard pose. So every label you add pulls its own weight.
 """
 
 import logging
@@ -31,8 +34,9 @@ STRANGER = "(stranger)"  # real face, unknown person: archived, but never sugges
 # ended up at 50px and matched its own person no better than a stranger did.
 DET_SIZE = 1024  # detector input; larger finds the small faces in group shots
 LOAD_MAX_SIDE = 6000  # only a memory guard for absurd images; normal photos are used at full size
-# Measured: impostors peak at ~0.26 cosine, true matches sit at p10=0.40, median 0.68.
-SUGGEST_MIN_SIM = 0.40
+# Measured against the family library with nearest-face scoring: true matches sit at p10=0.43,
+# impostors at p99=0.35. 0.45 keeps wrong guesses rare without silencing the hard poses.
+SUGGEST_MIN_SIM = 0.45
 SUGGEST_MARGIN = 0.05  # and the runner-up must be clearly behind, else we ask rather than guess
 KEEP_LABEL_IOU = 0.4  # a re-detected face overlapping this much is the same face: carry its label over
 # Measured on the family library: labelled faces sit at p5=64px, so 50 drops background noise
@@ -196,19 +200,18 @@ def _iou(a: tuple, b: tuple) -> float:
 # --- labeling --------------------------------------------------------------
 
 
-def _centroids() -> dict[str, np.ndarray]:
+def _labeled() -> tuple[np.ndarray, list[str]]:
+    """Every labeled embedding, kept individually — no averaging, see the module docstring."""
     with core.db() as con:
         rows = con.execute(
             "SELECT label, embedding FROM faces WHERE label IS NOT NULL AND label NOT IN (?, ?)", (IGNORE, STRANGER)
         ).fetchall()
-    grouped: dict[str, list[np.ndarray]] = {}
-    for r in rows:
-        grouped.setdefault(r["label"], []).append(np.frombuffer(r["embedding"], dtype=np.float32))
-    centroids = {}
-    for name, vecs in grouped.items():
-        c = np.mean(vecs, axis=0)
-        centroids[name] = c / (np.linalg.norm(c) or 1.0)
-    return centroids
+    if not rows:
+        return np.zeros((0, 512), dtype=np.float32), []
+    return (
+        np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows]),
+        [r["label"] for r in rows],
+    )
 
 
 def unlabeled(limit: int = 30) -> list[dict]:
@@ -217,21 +220,28 @@ def unlabeled(limit: int = 30) -> list[dict]:
     Scoring every pending face (not just the page's worth) is what lets us serve them in
     blocks of the same person: a wrong one stands out from its neighbours at a glance.
     """
-    centroids = _centroids()
+    known, names = _labeled()
     with core.db() as con:
         rows = con.execute("SELECT id, path, embedding FROM faces WHERE label IS NULL").fetchall()
+    people = sorted(set(names))
     scored = []
-    for r in rows:
-        vec = np.frombuffer(r["embedding"], dtype=np.float32)
-        ranked = sorted(((float(vec @ c), name) for name, c in centroids.items()), reverse=True)
+    if len(rows) and len(known):
+        vecs = np.stack([np.frombuffer(r["embedding"], dtype=np.float32) for r in rows])
+        sims = vecs @ known.T  # every pending face against every labeled face
+        labels = np.array(names)
+        per_person = np.column_stack([sims[:, labels == p].max(axis=1) for p in people])
+    else:
+        per_person = np.zeros((len(rows), 0))
+    for i, r in enumerate(rows):
         suggest, sim = None, 0.0
-        if ranked:
-            sim, best = ranked[0]
-            runner_up = ranked[1][0] if len(ranked) > 1 else 0.0
+        if per_person.shape[1]:
+            order = np.argsort(-per_person[i])
+            sim = float(per_person[i][order[0]])
+            runner_up = float(per_person[i][order[1]]) if len(order) > 1 else 0.0
             # guess only when it is both confident and clearly ahead — a wrong pre-selection is
-            # worse than none, because confirming it poisons the person's average
+            # worse than none, because confirming it teaches the wrong face
             if sim >= SUGGEST_MIN_SIM and sim - runner_up >= SUGGEST_MARGIN:
-                suggest = best
+                suggest = people[order[0]]
         scored.append({"id": r["id"], "path": r["path"], "suggest": suggest, "score": sim})
     # people alphabetically (surest face first within each), the "no idea" ones last
     scored.sort(key=lambda f: (f["suggest"] is None, (f["suggest"] or "").lower(), -f["score"]))

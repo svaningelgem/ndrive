@@ -389,6 +389,12 @@ def test_heic_rendition(client: TestClient) -> None:
         assert max(thumb.size) <= core.THUMB_SIDE
 
 
+def _vec_array(hot: int) -> np.ndarray:
+    v = np.zeros(512, dtype=np.float32)
+    v[hot] = 1.0
+    return v
+
+
 def _vec(hot: int) -> bytes:
     v = np.zeros(512, dtype=np.float32)
     v[hot] = 1.0
@@ -479,6 +485,26 @@ def test_suggestion_needs_confidence_and_margin(client: TestClient) -> None:
     guesses = {f["id"]: f["suggest"] for f in faces.unlabeled()}
     assert guesses[weak_id] is None  # not confident enough
     assert guesses[amb_id] is None  # confident but a coin flip between two people
+
+
+def test_hard_pose_matches_its_own_kind_not_the_average(client: TestClient) -> None:
+    """Sunglasses/profile shots look nothing like frontal ones; a per-person average would bury
+    the single odd-looking example, so scoring must compare against individual labeled faces."""
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((8, 8, 8)), "image/jpeg"))])
+    for i in range(5):  # five ordinary shots of mama
+        _insert_face("alice/a.jpg", f"{i},1,{i + 20},20", _vec(0), label="mama")
+    _insert_face("alice/a.jpg", "1,40,21,60", _vec(1), label="mama")  # one of her in sunglasses
+    _insert_face("alice/a.jpg", "1,70,21,90", _vec(2), label="papa")
+
+    same_sunglasses = _insert_face("alice/a.jpg", "40,40,60,60", _vec(1))
+    guesses = {f["id"]: f["suggest"] for f in faces.unlabeled()}
+    assert guesses[same_sunglasses] == "mama"
+
+    # with an averaged face-per-person this scores ~0.20 and would have been left unrecognised
+    known, names = faces._labeled()
+    mama = known[[n == "mama" for n in names]]
+    centroid = mama.mean(0) / np.linalg.norm(mama.mean(0))
+    assert float(_vec_array(1) @ centroid) < faces.SUGGEST_MIN_SIM
 
 
 def test_labeling_page_groups_by_suggested_person(client: TestClient) -> None:
