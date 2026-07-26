@@ -23,8 +23,16 @@ log = logging.getLogger("ndrive")
 
 IGNORE = "(not a face)"
 STRANGER = "(stranger)"  # real face, unknown person: archived, but never suggested or filterable
-SUGGEST_MIN_SIM = 0.25  # cosine similarity below this → no pre-selected guess
-DETECT_MAX_SIDE = 1600
+
+# Recognition crops are taken from the array we hand to insightface, so downscaling here directly
+# blurs the embedding. Measured on the family library: at 1600 a typical 135px face shrank to 50px
+# and matched its own person no better than a stranger would.
+DETECT_MAX_SIDE = 3200
+DET_SIZE = 1024  # detector input; larger finds the small faces in group shots
+# Measured: impostors peak at ~0.26 cosine, true matches sit at p10=0.40, median 0.68.
+SUGGEST_MIN_SIM = 0.40
+SUGGEST_MARGIN = 0.05  # and the runner-up must be clearly behind, else we ask rather than guess
+KEEP_LABEL_IOU = 0.4  # a re-detected face overlapping this much is the same face: carry its label over
 _analyzer = None
 
 
@@ -37,7 +45,7 @@ def _get_analyzer():
             allowed_modules=["detection", "recognition"],
             providers=["CPUExecutionProvider"],
         )
-        analyzer.prepare(ctx_id=0, det_size=(640, 640))
+        analyzer.prepare(ctx_id=0, det_size=(DET_SIZE, DET_SIZE))
         _analyzer = analyzer
     return _analyzer
 
@@ -113,14 +121,39 @@ def _scan_one(rel: str, mtime: float) -> None:
         arr = np.asarray(img)[:, :, ::-1]  # insightface wants BGR
     found = _get_analyzer().get(arr)
     with core.db() as con:
+        old = [
+            (tuple(int(v) for v in r["bbox"].split(",")), r["id"], r["label"])
+            for r in con.execute("SELECT id, bbox, label FROM faces WHERE path=?", (rel,))
+        ]
+        for _, face_id, _label in old:
+            (core.CACHE / "img" / f"face-{face_id}.jpg").unlink(missing_ok=True)  # ids get reused; drop stale crops
         con.execute("DELETE FROM faces WHERE path=?", (rel,))
         for f in found:
-            bbox = ",".join(str(round(float(v) * scale)) for v in f.bbox)  # back to original-pixel coords
+            box = tuple(round(float(v) * scale) for v in f.bbox)  # back to original-pixel coords
+            label = next(
+                (
+                    lab
+                    for b, _i, lab in sorted(old, key=lambda o: -_iou(box, o[0]))
+                    if lab and _iou(box, b) >= KEEP_LABEL_IOU
+                ),
+                None,
+            )
             con.execute(
-                "INSERT OR REPLACE INTO faces(path, bbox, embedding, label) VALUES(?,?,?,NULL)",
-                (rel, bbox, f.normed_embedding.astype(np.float32).tobytes()),
+                "INSERT OR REPLACE INTO faces(path, bbox, embedding, label) VALUES(?,?,?,?)",
+                (rel, ",".join(str(v) for v in box), f.normed_embedding.astype(np.float32).tobytes(), label),
             )
         con.execute("INSERT OR REPLACE INTO face_scan VALUES(?,?)", (rel, mtime))
+
+
+def _iou(a: tuple, b: tuple) -> float:
+    """Overlap between two boxes — used to recognise 'the same face' across a re-scan."""
+    ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+    ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    if not inter:
+        return 0.0
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union else 0.0
 
 
 # --- labeling --------------------------------------------------------------
@@ -149,12 +182,16 @@ def unlabeled(limit: int = 30) -> list[dict]:
     out = []
     for r in rows:
         vec = np.frombuffer(r["embedding"], dtype=np.float32)
-        best, sim = None, 0.0
-        for name, centroid in centroids.items():
-            s = float(vec @ centroid)
-            if s > sim:
-                best, sim = name, s
-        out.append({"id": r["id"], "path": r["path"], "suggest": best if sim >= SUGGEST_MIN_SIM else None})
+        scored = sorted(((float(vec @ c), name) for name, c in centroids.items()), reverse=True)
+        suggest = None
+        if scored:
+            sim, best = scored[0]
+            runner_up = scored[1][0] if len(scored) > 1 else 0.0
+            # guess only when it is both confident and clearly ahead — a wrong pre-selection is
+            # worse than none, because confirming it poisons the person's average
+            if sim >= SUGGEST_MIN_SIM and sim - runner_up >= SUGGEST_MARGIN:
+                suggest = best
+        out.append({"id": r["id"], "path": r["path"], "suggest": suggest})
     return out
 
 

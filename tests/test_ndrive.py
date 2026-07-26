@@ -44,8 +44,10 @@ def client(tmp_path: Path, mocker) -> TestClient:
     core.configure(tmp_path)
     core.add_user(*ALICE)
     core.add_user(*BOB)
-    # no real scan threads by default: they would outlive tmp_path and hit a deleted database
+    # no real background work by default: those threads would outlive tmp_path and hit a deleted database
     mocker.patch.object(faces, "scan_async")
+    mocker.patch.object(core, "scan_all")
+    mocker.patch.object(core, "transcode_all")
     return TestClient(create_app(tmp_path))
 
 
@@ -438,6 +440,45 @@ def test_face_labeling_flow(client: TestClient) -> None:
     client.post("/api/upload", auth=BOB, files=[("files", ("b.jpg", mandel_jpeg(), "image/jpeg"))])
     photos = core.list_photos("bob", person="mama")
     assert [p["path"] for p in photos] == ["alice/a.jpg"]
+
+
+def test_rescan_keeps_labels_and_drops_stale_crop(client: TestClient, mocker) -> None:
+    """A re-scan re-detects the same faces; labels must survive it (matched by overlap)."""
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((10, 20, 30)), "image/jpeg"))])
+    fake_model(mocker)
+    faces.scan_faces()
+    with core.db() as con:
+        face_id = con.execute("SELECT id FROM faces WHERE path='alice/a.jpg'").fetchone()[0]
+    faces.set_label(face_id, "oma")
+    stale = core.CACHE / "img" / f"face-{face_id}.jpg"
+    stale.write_bytes(b"old crop")
+
+    with core.db() as con:  # force a re-scan of the same file
+        con.execute("DELETE FROM face_scan")
+    faces.scan_faces()
+
+    with core.db() as con:
+        rows = con.execute("SELECT id, label FROM faces WHERE path='alice/a.jpg'").fetchall()
+    assert [r["label"] for r in rows] == ["oma"]  # label carried over to the re-detected face
+    assert not stale.exists()  # cached crop of the old row is gone, so ids cannot show a wrong face
+
+
+def test_suggestion_needs_confidence_and_margin(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((9, 9, 9)), "image/jpeg"))])
+    _insert_face("alice/a.jpg", "1,1,20,20", _vec(0), label="mama")
+    _insert_face("alice/a.jpg", "2,2,21,21", _vec(1), label="papa")
+
+    weak = np.zeros(512, dtype=np.float32)  # 0.3 towards mama: above the old 0.25, below the real bar
+    weak[0], weak[5] = 0.3, (1 - 0.3**2) ** 0.5
+    weak_id = _insert_face("alice/a.jpg", "40,40,60,60", weak.tobytes())
+
+    ambiguous = np.zeros(512, dtype=np.float32)  # equally close to both people
+    ambiguous[0] = ambiguous[1] = 0.5**0.5
+    amb_id = _insert_face("alice/a.jpg", "70,70,90,90", ambiguous.tobytes())
+
+    guesses = {f["id"]: f["suggest"] for f in faces.unlabeled()}
+    assert guesses[weak_id] is None  # not confident enough
+    assert guesses[amb_id] is None  # confident but a coin flip between two people
 
 
 class FakeFace:
