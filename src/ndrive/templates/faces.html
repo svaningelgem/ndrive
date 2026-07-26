@@ -47,6 +47,10 @@ header a { color: #4a9eff; text-decoration: none; }
       no idea yet <span class="count">({{ g['faces'] | length }})</span>
     {% endif %}
     <button onclick="confirmGroup(this)">✓ confirm all {{ g['faces'] | length }}</button>
+    {% if not g['suggest'] %}
+    <button onclick="markAll(this, '{{ stranger }}')" title="nobody we know — clears them from the list"
+            style="margin-left:.4rem">👥 all {{ g['faces'] | length }} are strangers</button>
+    {% endif %}
   </h2>
   <div class="grid">
   {% for f in g['faces'] %}
@@ -101,6 +105,18 @@ function drop(card) {
   if (group && !group.querySelector('.face')) group.remove();
   if (!document.querySelector('.face')) location.reload();  // fetch the next batch
 }
+async function markAll(btn, label) {
+  const cards = [...btn.closest('.group').querySelectorAll('.face')];
+  if (!await ask(`Mark all ${cards.length} of these as "${label}"?`)) return;
+  btn.disabled = true;
+  const done = (await Promise.all(cards.map(c =>
+    fetch('/api/face', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({face_id: +c.dataset.id, label})})
+      .then(r => r.ok ? c : null).catch(() => null)))).filter(Boolean);
+  done.forEach(drop);
+  toast(`${done.length} face(s) filed as ${label}`);
+}
+
 async function confirmGroup(btn) {
   // each card is saved with whatever ITS dropdown says, so corrections you made are kept
   const cards = [...btn.closest('.group').querySelectorAll('.face')];
