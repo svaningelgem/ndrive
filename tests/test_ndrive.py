@@ -481,15 +481,27 @@ def test_suggestion_needs_confidence_and_margin(client: TestClient) -> None:
     assert guesses[amb_id] is None  # confident but a coin flip between two people
 
 
-class FakeFace:
-    bbox = np.array([2.0, 2.0, 30.0, 30.0])
-    normed_embedding = np.ones(512, dtype=np.float32) / np.sqrt(512)
+class FakeAnalyzer:
+    """Stands in for insightface: a detector and a recogniser, same call shapes as the real ones."""
+
+    def __init__(self) -> None:
+        self.det_model = self
+        self.models = {"recognition": self}
+        self.detected_on: list[tuple[int, int]] = []
+        self.embedded_on: list[tuple[int, int]] = []
+
+    def detect(self, img: np.ndarray, max_num: int = 0, metric: str = "default"):
+        self.detected_on.append(img.shape[:2])
+        return np.array([[2.0, 2.0, 30.0, 30.0, 0.99]], dtype=np.float32), np.zeros((1, 5, 2), dtype=np.float32)
+
+    def get(self, img: np.ndarray, face) -> None:
+        self.embedded_on.append(img.shape[:2])  # which image the crop came from is the whole point
+        face.embedding = np.ones(512, dtype=np.float32)
 
 
-def fake_model(mocker, inline: bool = False):
+def fake_model(mocker, inline: bool = False) -> FakeAnalyzer:
     """Pretend the ML stack is installed; optionally run sweeps inline instead of threaded."""
-    analyzer = mocker.MagicMock()
-    analyzer.get.return_value = [FakeFace()]
+    analyzer = FakeAnalyzer()
     mocker.patch.object(faces, "FaceAnalysis", object())
     mocker.patch.object(faces, "_get_analyzer", return_value=analyzer)
     if inline:
@@ -521,4 +533,24 @@ def test_scan_faces_with_mocked_model(client: TestClient, mocker) -> None:
         assert con.execute("SELECT COUNT(*) FROM face_scan").fetchone()[0] == 1
 
     faces.scan_faces()  # unchanged photo → not scanned again
-    assert analyzer.get.call_count == 1
+    assert len(analyzer.embedded_on) == 1
+
+
+def test_embedding_uses_full_resolution_not_the_detection_copy(client: TestClient, mocker) -> None:
+    """The bug that made big photos unrecognisable: the crop must come from the original pixels."""
+    big = Image.effect_mandelbrot((4000, 3000), (-2.0, -1.5, 1.0, 1.5), 40).convert("RGB")
+    buf = io.BytesIO()
+    big.save(buf, "JPEG", quality=60)
+    (core.DATA / "alice/big.jpg").write_bytes(buf.getvalue())
+    core.index_file("alice/big.jpg")
+
+    analyzer = fake_model(mocker)
+    faces.scan_faces()
+
+    assert analyzer.detected_on == [(768, 1024)]  # detector saw a copy shrunk to DET_SIZE on the long side
+    assert analyzer.embedded_on == [(3000, 4000)]  # but the embedding came off the full-size image
+
+    with core.db() as con:
+        bbox = con.execute("SELECT bbox FROM faces WHERE path='alice/big.jpg'").fetchone()[0]
+    x1, y1, x2, y2 = (int(v) for v in bbox.split(","))
+    assert (x1, y1, x2, y2) == (8, 8, 117, 117)  # detector box scaled back to original coordinates

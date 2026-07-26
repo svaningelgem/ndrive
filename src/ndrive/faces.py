@@ -7,6 +7,7 @@ to those means. Every confirmed label immediately improves future suggestions.
 
 import logging
 import threading
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -24,11 +25,12 @@ log = logging.getLogger("ndrive")
 IGNORE = "(not a face)"
 STRANGER = "(stranger)"  # real face, unknown person: archived, but never suggested or filterable
 
-# Recognition crops are taken from the array we hand to insightface, so downscaling here directly
-# blurs the embedding. Measured on the family library: at 1600 a typical 135px face shrank to 50px
-# and matched its own person no better than a stranger would.
-DETECT_MAX_SIDE = 3200
+# Detection runs on a downscaled copy (cheap — the detector resizes to DET_SIZE anyway), but the
+# recognition crop is warped out of the ORIGINAL pixels: shrinking a face to 112px keeps detail,
+# upscaling a 50px face into 112px invents it. Measured before this: a 135px face in a 12MP photo
+# ended up at 50px and matched its own person no better than a stranger did.
 DET_SIZE = 1024  # detector input; larger finds the small faces in group shots
+LOAD_MAX_SIDE = 6000  # only a memory guard for absurd images; normal photos are used at full size
 # Measured: impostors peak at ~0.26 cosine, true matches sit at p10=0.40, median 0.68.
 SUGGEST_MIN_SIM = 0.40
 SUGGEST_MARGIN = 0.05  # and the runner-up must be clearly behind, else we ask rather than guess
@@ -107,19 +109,48 @@ def scan_faces() -> None:
         log.info(f"face scan done: {len(todo)} new photo(s)")
 
 
+@dataclass
+class _Det:
+    """A detection carried between the two models; embedding is filled in by the recogniser."""
+
+    bbox: np.ndarray
+    kps: np.ndarray
+    embedding: np.ndarray = field(default=None)
+
+    @property
+    def normed_embedding(self) -> np.ndarray:
+        return self.embedding / (np.linalg.norm(self.embedding) or 1.0)
+
+
+def _detect_and_embed(full_bgr: np.ndarray, small_bgr: np.ndarray, scale: float) -> list[_Det]:
+    analyzer = _get_analyzer()
+    boxes, kpss = analyzer.det_model.detect(small_bgr, max_num=0, metric="default")
+    out = []
+    for i in range(len(boxes)):
+        if kpss is None:  # no landmarks means no alignment, and an unaligned crop embeds badly
+            continue
+        det = _Det(bbox=boxes[i][:4] * scale, kps=kpss[i] * scale)  # back to original-pixel coords
+        analyzer.models["recognition"].get(full_bgr, det)  # warps 112x112 out of the ORIGINAL pixels
+        out.append(det)
+    return out
+
+
 def _scan_one(rel: str, mtime: float) -> None:
     abs_ = core.resolve(rel)
     if not abs_.is_file():
         return
     with Image.open(abs_) as img:
         img = ImageOps.exif_transpose(img).convert("RGB")
-        scale = max(img.size) / DETECT_MAX_SIDE
-        if scale > 1:
-            img = img.resize((round(img.width / scale), round(img.height / scale)))
-        else:
-            scale = 1.0
-        arr = np.asarray(img)[:, :, ::-1]  # insightface wants BGR
-    found = _get_analyzer().get(arr)
+        if max(img.size) > LOAD_MAX_SIDE:
+            img = ImageOps.contain(img, (LOAD_MAX_SIDE, LOAD_MAX_SIDE))
+        full = np.asarray(img)[:, :, ::-1]  # insightface wants BGR
+        scale = max(max(img.size) / DET_SIZE, 1.0)
+        small = (
+            np.asarray(img.resize((round(img.width / scale), round(img.height / scale))))[:, :, ::-1]
+            if scale > 1
+            else full
+        )
+    found = _detect_and_embed(full, small, scale)
     with core.db() as con:
         old = [
             (tuple(int(v) for v in r["bbox"].split(",")), r["id"], r["label"])
@@ -129,7 +160,7 @@ def _scan_one(rel: str, mtime: float) -> None:
             (core.CACHE / "img" / f"face-{face_id}.jpg").unlink(missing_ok=True)  # ids get reused; drop stale crops
         con.execute("DELETE FROM faces WHERE path=?", (rel,))
         for f in found:
-            box = tuple(round(float(v) * scale) for v in f.bbox)  # back to original-pixel coords
+            box = tuple(round(float(v)) for v in f.bbox)  # already in original-pixel coords
             label = next(
                 (
                     lab
