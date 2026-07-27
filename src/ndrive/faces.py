@@ -273,6 +273,19 @@ def label_options() -> list[str]:
     return sorted(set(core.users()) | set(people()), key=str.lower)
 
 
+def people_counts() -> dict[str, int]:
+    """Pictures each labeled person appears in."""
+    with core.db() as con:
+        return {
+            r["label"]: r["n"]
+            for r in con.execute(
+                "SELECT label, COUNT(DISTINCT path) n FROM faces "
+                "WHERE label IS NOT NULL AND label NOT IN (?, ?) GROUP BY label",
+                (IGNORE, STRANGER),
+            )
+        }
+
+
 def people() -> list[str]:
     with core.db() as con:
         rows = con.execute(

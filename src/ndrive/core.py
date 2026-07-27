@@ -143,6 +143,12 @@ def users() -> list[str]:
     return sorted(d.name for d in DATA.iterdir() if d.is_dir())
 
 
+def photo_counts() -> dict[str, int]:
+    """How many pictures each account has — accounts with none are worth flagging in the filter."""
+    with db() as con:
+        return {r["owner"]: r["n"] for r in con.execute("SELECT owner, COUNT(*) n FROM photos GROUP BY owner")}
+
+
 def can_write(username: str, rel_path: str) -> bool:
     """The entire permission model: you may only touch paths under your own top folder."""
     parts = [p for p in rel_path.split("/") if p]

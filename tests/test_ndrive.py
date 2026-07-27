@@ -168,6 +168,23 @@ def test_liked_filter(client: TestClient) -> None:
     assert "alice/b.jpg" not in html
 
 
+def test_filter_dropdowns_show_what_is_available(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((1, 2, 3)), "image/jpeg"))])
+    client.post("/api/upload", auth=ALICE, files=[("files", ("b.jpg", jpeg_bytes((4, 5, 6)), "image/jpeg"))])
+    _insert_face("alice/a.jpg", "1,1,20,20", _vec(0), label="mama")
+
+    html = client.get("/", auth=BOB).text
+    assert ">bob (nothing yet)</option>" not in html  # bob is the viewer: shown as "mine"
+    assert "📁 mine (nothing yet)" not in html
+    assert ">alice 📷 2</option>" in html  # alice has two pictures
+    assert "👪 everyone 📷 2" in html
+    assert ">mama 📷 1</option>" in html  # one picture has mama in it
+
+    html_alice = client.get("/", auth=ALICE).text
+    assert "📁 mine 📷 2" in html_alice
+    assert ">bob (nothing yet)</option>" in html_alice  # bob uploaded nothing
+
+
 def test_default_sort_is_oldest_first(client: TestClient) -> None:
     old = jpeg_bytes((1, 1, 1), taken="2026:07:01 08:00:00")
     new = jpeg_bytes((2, 2, 2), taken="2026:07:09 08:00:00")
