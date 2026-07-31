@@ -79,7 +79,9 @@ dialog a { color: #4a9eff; }
     <option value="">📁 {{ user }}/</option>
     {% for f in my_folders %}<option value="{{ f }}">📁 {{ user }}/{{ f }}</option>{% endfor %}
   </select>
-  <label class="btn">upload<input id="up" type="file" accept="image/*,video/*,.heic,.heif" multiple hidden></label>
+  <!-- accept must stay pure MIME wildcards: bare extensions (.heic/.heif) resolve to nothing on
+       Android pickers, which then grey out their own "Done" button. image/* already covers HEIC. -->
+  <label class="btn">upload<input id="up" type="file" accept="image/*,video/*" multiple hidden></label>
   <span>{{ user }}</span>
 </header>
 
