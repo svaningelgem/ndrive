@@ -77,7 +77,7 @@ def db():
     con = sqlite3.connect(_DB)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA busy_timeout=5000")
+    con.execute("PRAGMA busy_timeout=30000")  # a face-label save lost the race to an upload storm at 5s
     try:
         yield con
         con.commit()
