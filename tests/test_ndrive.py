@@ -622,3 +622,35 @@ def test_embedding_uses_full_resolution_not_the_detection_copy(client: TestClien
         bbox = con.execute("SELECT bbox FROM faces WHERE path='alice/big.jpg'").fetchone()[0]
     x1, y1, x2, y2 = (int(v) for v in bbox.split(","))
     assert (x1, y1, x2, y2) == (8, 8, 227, 227)  # detector box scaled back to original coordinates
+
+
+def test_reuploading_the_same_bytes_is_skipped(client: TestClient) -> None:
+    same = jpeg_bytes((3, 4, 5))
+    r1 = client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", same, "image/jpeg"))])
+    r2 = client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", same, "image/jpeg"))])
+    assert r1.json()["count"] == 1
+    assert (r2.json()["count"], r2.json()["skipped"]) == (0, 1)
+    assert not (core.DATA / "alice/a-1.jpg").exists()
+    assert [p.name for p in (core.DATA / "alice").iterdir()] == ["a.jpg"]
+
+
+def test_same_name_different_picture_still_lands(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((1, 2, 3)), "image/jpeg"))])
+    r = client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", mandel_jpeg(), "image/jpeg"))])
+    assert (r.json()["count"], r.json()["skipped"]) == (1, 0)
+    assert (core.DATA / "alice/a-1.jpg").exists()
+
+
+def test_dedupe_trashes_byte_identical_copies_per_owner(client: TestClient) -> None:
+    same = jpeg_bytes((7, 8, 9))
+    for name in ("holiday.jpg", "holiday-1.jpg"):  # WebDAV can still land two names with one content
+        (core.DATA / "alice" / name).write_bytes(same)
+    (core.DATA / "bob/theirs.jpg").write_bytes(same)
+    for rel in ("alice/holiday.jpg", "alice/holiday-1.jpg", "bob/theirs.jpg"):
+        core.index_file(rel)
+
+    assert core.dedupe() == 1
+    assert (core.DATA / "alice/holiday.jpg").exists()  # earliest upload wins; same second, so shortest name
+    assert not (core.DATA / "alice/holiday-1.jpg").exists()
+    assert (core.DATA / "bob/theirs.jpg").exists()  # another owner's copy is theirs to keep
+    assert core.dedupe() == 0

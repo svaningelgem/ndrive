@@ -118,6 +118,7 @@ dialog a { color: #4a9eff; }
   <p id="updlg-file"></p>
   <progress id="updlg-bar" max="100" value="0"></progress>
   <p id="updlg-pct"></p>
+  <button class="btn" onclick="stopUpload()">stop</button>
 </dialog>
 
 <dialog id="lb">
@@ -188,28 +189,44 @@ function downloadSel() {
 const folderSel = document.getElementById('folderSel');
 const ctx = document.getElementById('ctx');
 
+let curXhr = null, stopped = false;
+
+function stopUpload() {
+  stopped = true;
+  curXhr ? curXhr.abort() : document.getElementById('updlg').close();  // nothing in flight: we were still waiting
+}
+function upDialog(title, note) {
+  const dlg = document.getElementById('updlg');
+  document.getElementById('updlg-title').textContent = title;
+  document.getElementById('updlg-file').textContent = note || '';
+  if (!dlg.open) dlg.showModal();
+  return dlg;
+}
 function xhrUpload(fd, onProgress) {  // fetch() has no upload progress; XHR does
   return new Promise((resolve, reject) => {
-    const x = new XMLHttpRequest();
+    const x = curXhr = new XMLHttpRequest();
     x.open('POST', '/api/upload');
     x.upload.onprogress = e => onProgress(e.loaded);
     x.onload = () => x.status < 300 ? resolve(JSON.parse(x.responseText)) : reject(new Error(x.status));
-    x.onerror = () => reject(new Error('network'));
+    x.onerror = x.onabort = () => reject(new Error('network'));
     x.send(fd);
   });
 }
 async function uploadFiles(files) {
-  if (!files.length) return;
   const dlg = document.getElementById('updlg');
+  if (!files.length) return dlg.close();
   const bar = document.getElementById('updlg-bar');
   const pct = document.getElementById('updlg-pct');
   const total = files.reduce((s, f) => s + f.size, 0) || 1;
-  let doneBytes = 0, done = 0;
+  let doneBytes = 0, done = 0, skipped = 0;
   const notes = [];
-  dlg.showModal();
+  stopped = false;
+  bar.value = 0;  // back to determinate after the indeterminate "waiting for the picker" state
+  // a phone that locks its screen drops the connection mid-batch; hold it awake while we work
+  const wake = await navigator.wakeLock?.request('screen').catch(() => null);
   for (const f of files) {  // one request per file: a dropped connection keeps what's done
-    document.getElementById('updlg-title').textContent = 'uploading ' + (done + 1) + ' / ' + files.length;
-    document.getElementById('updlg-file').textContent = f.name;
+    if (stopped) break;
+    upDialog('uploading ' + (done + 1) + ' / ' + files.length, f.name);
     const fd = new FormData();
     fd.append('folder', folderSel.value);
     fd.append('files', f);
@@ -219,13 +236,18 @@ async function uploadFiles(files) {
         bar.value = p;
         pct.textContent = p + '%';
       });
+      skipped += d.skipped;
       notes.push(...d.warnings);
     } catch {
-      notes.push(f.name + ' failed to upload — try that one again.');
+      if (!stopped) notes.push(f.name + ' failed to upload — pick the same batch again, what arrived is skipped.');
     }
     doneBytes += f.size;
     done++;
   }
+  curXhr = null;
+  wake?.release();
+  if (stopped) notes.unshift('Stopped after ' + done + ' of ' + files.length + '.');
+  if (skipped) notes.unshift(skipped + ' were already here — skipped.');
   dlg.close();
   notes.length ? reloadWithToast('Done, but:\n' + notes.join('\n')) : location.reload();
 }
@@ -275,6 +297,12 @@ addEventListener('contextmenu', e => {
   ctx.style.top = Math.min(e.clientY, innerHeight - ctx.offsetHeight - 8) + 'px';
 });
 addEventListener('click', () => { ctx.style.display = 'none'; });
+// the picker can take a minute to hand over a big selection — say so instead of looking dead
+document.getElementById('up').addEventListener('click', () => {
+  upDialog('waiting for your pictures…', 'a big selection takes a while before the first one starts — keep this page open');
+  document.getElementById('updlg-bar').removeAttribute('value');  // indeterminate: we have nothing to measure yet
+});
+document.getElementById('up').addEventListener('cancel', () => document.getElementById('updlg').close());
 document.getElementById('up').addEventListener('change', e => uploadFiles([...e.target.files]));
 addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dropping'); });
 addEventListener('dragleave', e => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });

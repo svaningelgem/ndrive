@@ -6,6 +6,7 @@ Layout under HOME (default ./storage):
     trash/<stamp>/    soft-deleted files, dropped by `ndrive purge-trash`
 """
 
+import filecmp
 import hashlib
 import hmac
 import json
@@ -15,6 +16,7 @@ import shutil
 import sqlite3
 import subprocess
 import threading
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
@@ -386,6 +388,43 @@ def _grab_frame(src: Path, out: Path, max_side: int) -> None:
             return
         out.unlink(missing_ok=True)
     raise RuntimeError(f"ffmpeg could not extract a frame from {src.name}")
+
+
+def _same_bytes(a: Path, b: Path) -> bool:
+    return a.is_file() and filecmp.cmp(a, b, shallow=False)
+
+
+def identical_twin(rel: str) -> str | None:
+    """Path of an indexed file of the same owner holding the exact same bytes, if there is one."""
+    abs_ = resolve(rel)
+    with db() as con:
+        rows = con.execute(
+            "SELECT path FROM photos WHERE owner=? AND size=? AND path<>?",
+            (rel.split("/")[0], abs_.stat().st_size, rel),
+        ).fetchall()
+    return next((r["path"] for r in rows if _same_bytes(resolve(r["path"]), abs_)), None)
+
+
+def dedupe() -> int:
+    """Trash byte-identical copies within one owner, keeping the one uploaded first (ties: shortest name)."""
+    groups: dict[tuple[str, int], list[str]] = defaultdict(list)
+    with db() as con:
+        for r in con.execute("SELECT path, owner, size FROM photos ORDER BY uploaded_at, LENGTH(path), path"):
+            groups[(r["owner"], r["size"])].append(r["path"])
+    trashed = 0
+    for paths in (g for g in groups.values() if len(g) > 1):
+        keepers: list[Path] = []
+        for rel in paths:
+            abs_ = resolve(rel)
+            if not abs_.is_file():
+                continue
+            if any(_same_bytes(k, abs_) for k in keepers):
+                log.info(f"dedupe: {rel} is byte-identical to one already here — to the trash")
+                move_to_trash(rel)
+                trashed += 1
+            else:
+                keepers.append(abs_)
+    return trashed
 
 
 def _near_duplicates(phash: str | None, rel: str) -> list[str]:

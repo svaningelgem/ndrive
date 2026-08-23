@@ -2,6 +2,7 @@
 
 import base64
 import json
+import logging
 import os
 import shutil
 import tempfile
@@ -23,6 +24,7 @@ from wsgidav.wsgidav_app import WsgiDAVApp
 
 from ndrive import core, faces
 
+log = logging.getLogger("ndrive")
 security = HTTPBasic()
 DAV_PREFIX = "/dav"
 WRITE_METHODS = {"PUT", "MKCOL", "PROPPATCH", "DELETE", "MOVE", "COPY", "LOCK", "UNLOCK"}
@@ -279,14 +281,22 @@ def create_app(home: str | Path | None = None) -> FastAPI:
         if not core.can_write(user, parent) or not core.resolve(parent).is_dir():
             raise HTTPException(400, "Bad upload folder")
         warnings = []
+        stored = skipped = 0
         for f in files:
             rel = core.unique_dest(parent, f.filename or "upload")
             with core.resolve(rel).open("wb") as out:
                 shutil.copyfileobj(f.file, out)
+            if twin := core.identical_twin(rel):
+                core.resolve(rel).unlink()  # same bytes already here — a retry after a dropped connection
+                log.info(f"upload: {f.filename} is already here as {twin} — skipped")
+                skipped += 1
+                continue
+            stored += 1
             if dups := core.index_file(rel):
                 warnings.append(f"{Path(rel).name} looks like a duplicate of: {', '.join(dups)}")
-        faces.scan_async()
-        return {"count": len(files), "warnings": warnings}
+        if stored:
+            faces.scan_async()
+        return {"count": stored, "skipped": skipped, "warnings": warnings}
 
     @app.post("/api/delete")
     def delete(payload: PathsPayload, user: str = Depends(current_user)):
@@ -327,6 +337,8 @@ def create_app(home: str | Path | None = None) -> FastAPI:
 
     def _startup_scan():
         core.scan_all()
+        if trashed := core.dedupe():
+            log.info(f"startup: trashed {trashed} byte-identical copy/copies")
         faces.sweep()
         core.transcode_all()
 
