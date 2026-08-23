@@ -218,7 +218,7 @@ async function uploadFiles(files) {
   const bar = document.getElementById('updlg-bar');
   const pct = document.getElementById('updlg-pct');
   const total = files.reduce((s, f) => s + f.size, 0) || 1;
-  let doneBytes = 0, done = 0, skipped = 0;
+  let doneBytes = 0, done = 0, landed = 0, skipped = 0, failed = 0, offline = false;
   const notes = [];
   stopped = false;
   bar.value = 0;  // back to determinate after the indeterminate "waiting for the picker" state
@@ -236,22 +236,30 @@ async function uploadFiles(files) {
         bar.value = p;
         pct.textContent = p + '%';
       });
+      landed += d.count;
       skipped += d.skipped;
+      offline = false;
       notes.push(...d.warnings);
     } catch {
-      if (!stopped) notes.push(f.name + ' failed to upload — pick the same batch again, what arrived is skipped.');
+      if (!stopped) { failed++; offline = true; }
     }
     doneBytes += f.size;
     done++;
   }
   curXhr = null;
   wake?.release();
-  if (stopped) notes.unshift('Stopped after ' + done + ' of ' + files.length + '.');
+  if (failed) notes.unshift(failed + " didn't make it — pick the same batch again, what arrived is skipped.");
   if (skipped) notes.unshift(skipped + ' were already here — skipped.');
+  if (stopped) notes.unshift('Stopped after ' + done + ' of ' + files.length + '.');
+  const summary = landed + ' picture(s) added.' + (notes.length ? '\n' + notes.join('\n') : '');
   dlg.close();
-  notes.length ? reloadWithToast('Done, but:\n' + notes.join('\n')) : location.reload();
+  // reloading while the connection is still down lands on the browser's offline page — keep the summary on screen
+  offline ? toast(summary + "\nStill offline — reload the page once you're back.", 15000) : reloadWithToast(summary);
 }
-document.getElementById('updlg').addEventListener('cancel', e => e.preventDefault());  // no Esc mid-upload
+document.getElementById('updlg').addEventListener('cancel', e => {  // Esc stops the batch, never just hides it
+  e.preventDefault();
+  stopUpload();
+});
 async function newFolder() {
   const name = await ask('New folder name (inside {{ user }}/):', true);
   if (!name) return;
