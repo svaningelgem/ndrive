@@ -10,8 +10,7 @@ See `PLAN.md` for the design and what's deliberately left out.
 ## Run
 
 ```bash
-python -m venv .venv
-.venv/bin/pip install -e .
+uv sync
 .venv/bin/python -m ndrive adduser steven      # once per family member
 .venv/bin/python -m ndrive serve --port 8484
 ```
