@@ -46,3 +46,6 @@ ignore = [
     "B008",  # Depends()/Form() in argument defaults is the FastAPI idiom
     "DTZ",   # naive local datetimes are deliberate: EXIF has no timezone either
 ]
+
+[tool.uv]
+python-preference = "only-managed"
