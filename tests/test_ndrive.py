@@ -40,10 +40,14 @@ def mandel_jpeg() -> bytes:
 
 
 @pytest.fixture
-def client(tmp_path: Path) -> TestClient:
+def client(tmp_path: Path, mocker) -> TestClient:
     core.configure(tmp_path)
     core.add_user(*ALICE)
     core.add_user(*BOB)
+    # no real background work by default: those threads would outlive tmp_path and hit a deleted database
+    mocker.patch.object(faces, "scan_async")
+    mocker.patch.object(core, "scan_all")
+    mocker.patch.object(core, "transcode_all")
     return TestClient(create_app(tmp_path))
 
 
@@ -162,6 +166,23 @@ def test_liked_filter(client: TestClient) -> None:
     html = client.get("/?liked=1&owner=*", auth=BOB).text
     assert "alice/a.jpg" in html
     assert "alice/b.jpg" not in html
+
+
+def test_filter_dropdowns_show_what_is_available(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((1, 2, 3)), "image/jpeg"))])
+    client.post("/api/upload", auth=ALICE, files=[("files", ("b.jpg", jpeg_bytes((4, 5, 6)), "image/jpeg"))])
+    _insert_face("alice/a.jpg", "1,1,20,20", _vec(0), label="mama")
+
+    html = client.get("/", auth=BOB).text
+    assert ">bob (nothing yet)</option>" not in html  # bob is the viewer: shown as "mine"
+    assert "📁 mine (nothing yet)" not in html
+    assert ">alice 📷 2</option>" in html  # alice has two pictures
+    assert "👪 everyone 📷 2" in html
+    assert ">mama 📷 1</option>" in html  # one picture has mama in it
+
+    html_alice = client.get("/", auth=ALICE).text
+    assert "📁 mine 📷 2" in html_alice
+    assert ">bob (nothing yet)</option>" in html_alice  # bob uploaded nothing
 
 
 def test_default_sort_is_oldest_first(client: TestClient) -> None:
@@ -385,6 +406,12 @@ def test_heic_rendition(client: TestClient) -> None:
         assert max(thumb.size) <= core.THUMB_SIDE
 
 
+def _vec_array(hot: int) -> np.ndarray:
+    v = np.zeros(512, dtype=np.float32)
+    v[hot] = 1.0
+    return v
+
+
 def _vec(hot: int) -> bytes:
     v = np.zeros(512, dtype=np.float32)
     v[hot] = 1.0
@@ -438,17 +465,135 @@ def test_face_labeling_flow(client: TestClient) -> None:
     assert [p["path"] for p in photos] == ["alice/a.jpg"]
 
 
+def test_rescan_keeps_labels_and_drops_stale_crop(client: TestClient, mocker) -> None:
+    """A re-scan re-detects the same faces; labels must survive it (matched by overlap)."""
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((10, 20, 30)), "image/jpeg"))])
+    fake_model(mocker)
+    faces.scan_faces()
+    with core.db() as con:
+        face_id = con.execute("SELECT id FROM faces WHERE path='alice/a.jpg'").fetchone()[0]
+    faces.set_label(face_id, "oma")
+    stale = core.CACHE / "img" / f"face-{face_id}.jpg"
+    stale.write_bytes(b"old crop")
+
+    with core.db() as con:  # force a re-scan of the same file
+        con.execute("DELETE FROM face_scan")
+    faces.scan_faces()
+
+    with core.db() as con:
+        rows = con.execute("SELECT id, label FROM faces WHERE path='alice/a.jpg'").fetchall()
+    assert [r["label"] for r in rows] == ["oma"]  # label carried over to the re-detected face
+    assert not stale.exists()  # cached crop of the old row is gone, so ids cannot show a wrong face
+
+
+def test_suggestion_needs_confidence_and_margin(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((9, 9, 9)), "image/jpeg"))])
+    _insert_face("alice/a.jpg", "1,1,20,20", _vec(0), label="mama")
+    _insert_face("alice/a.jpg", "2,2,21,21", _vec(1), label="papa")
+
+    weak = np.zeros(512, dtype=np.float32)  # 0.3 towards mama: above the old 0.25, below the real bar
+    weak[0], weak[5] = 0.3, (1 - 0.3**2) ** 0.5
+    weak_id = _insert_face("alice/a.jpg", "40,40,60,60", weak.tobytes())
+
+    ambiguous = np.zeros(512, dtype=np.float32)  # equally close to both people
+    ambiguous[0] = ambiguous[1] = 0.5**0.5
+    amb_id = _insert_face("alice/a.jpg", "70,70,90,90", ambiguous.tobytes())
+
+    guesses = {f["id"]: f["suggest"] for f in faces.unlabeled()}
+    assert guesses[weak_id] is None  # not confident enough
+    assert guesses[amb_id] is None  # confident but a coin flip between two people
+
+
+def test_hard_pose_matches_its_own_kind_not_the_average(client: TestClient) -> None:
+    """Sunglasses/profile shots look nothing like frontal ones; a per-person average would bury
+    the single odd-looking example, so scoring must compare against individual labeled faces."""
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((8, 8, 8)), "image/jpeg"))])
+    for i in range(5):  # five ordinary shots of mama
+        _insert_face("alice/a.jpg", f"{i},1,{i + 20},20", _vec(0), label="mama")
+    _insert_face("alice/a.jpg", "1,40,21,60", _vec(1), label="mama")  # one of her in sunglasses
+    _insert_face("alice/a.jpg", "1,70,21,90", _vec(2), label="papa")
+
+    same_sunglasses = _insert_face("alice/a.jpg", "40,40,60,60", _vec(1))
+    guesses = {f["id"]: f["suggest"] for f in faces.unlabeled()}
+    assert guesses[same_sunglasses] == "mama"
+
+    # with an averaged face-per-person this scores ~0.20 and would have been left unrecognised
+    known, names = faces._labeled()
+    mama = known[[n == "mama" for n in names]]
+    centroid = mama.mean(0) / np.linalg.norm(mama.mean(0))
+    assert float(_vec_array(1) @ centroid) < faces.SUGGEST_MIN_SIM
+
+
+def test_labeling_page_groups_by_suggested_person(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((9, 9, 9)), "image/jpeg"))])
+    _insert_face("alice/a.jpg", "1,1,20,20", _vec(0), label="mama")
+    _insert_face("alice/a.jpg", "2,2,21,21", _vec(1), label="papa")
+    # two faces that look like mama, one like papa, one unrecognisable — deliberately interleaved
+    m1 = _insert_face("alice/a.jpg", "10,10,30,30", _vec(0))
+    p1 = _insert_face("alice/a.jpg", "31,10,50,30", _vec(1))
+    m2 = _insert_face("alice/a.jpg", "51,10,70,30", _vec(0))
+    unknown = _insert_face("alice/a.jpg", "71,10,90,30", _vec(7))
+
+    groups = faces.grouped()
+    assert [g["suggest"] for g in groups] == ["mama", "papa", None]  # named blocks first, unknowns last
+    assert [f["id"] for f in groups[0]["faces"]] == [m1, m2]  # the two mamas arrive together
+    assert [f["id"] for f in groups[1]["faces"]] == [p1]
+    assert [f["id"] for f in groups[2]["faces"]] == [unknown]
+
+    html = client.get("/faces", auth=BOB).text
+    assert "✓ confirm all 2" in html  # one click confirms the whole block, each with its own dropdown
+    assert html.index("probably <b>mama") < html.index("probably <b>papa")  # people come alphabetically
+    # the bulk "someone unknown" helper belongs only to the block with no guess
+    assert html.count("set the rest to someone unknown") == 1
+    assert html.index("no idea yet") < html.index("set the rest to someone unknown")
+
+
+class FakeAnalyzer:
+    """Stands in for insightface: a detector and a recogniser, same call shapes as the real ones."""
+
+    def __init__(self) -> None:
+        self.det_model = self
+        self.models = {"recognition": self}
+        self.detected_on: list[tuple[int, int]] = []
+        self.embedded_on: list[tuple[int, int]] = []
+
+    def detect(self, img: np.ndarray, max_num: int = 0, metric: str = "default"):
+        self.detected_on.append(img.shape[:2])
+        # 56px box: comfortably above MIN_FACE_PX even when the image is not downscaled
+        return np.array([[2.0, 2.0, 58.0, 58.0, 0.99]], dtype=np.float32), np.zeros((1, 5, 2), dtype=np.float32)
+
+    def get(self, img: np.ndarray, face) -> None:
+        self.embedded_on.append(img.shape[:2])  # which image the crop came from is the whole point
+        face.embedding = np.ones(512, dtype=np.float32)
+
+
+def fake_model(mocker, inline: bool = False) -> FakeAnalyzer:
+    """Pretend the ML stack is installed; optionally run sweeps inline instead of threaded."""
+    analyzer = FakeAnalyzer()
+    mocker.patch.object(faces, "FaceAnalysis", object())
+    mocker.patch.object(faces, "_get_analyzer", return_value=analyzer)
+    if inline:
+        mocker.patch.object(faces, "scan_async", side_effect=faces.sweep)
+    return analyzer
+
+
+def test_upload_triggers_face_scan(client: TestClient, mocker) -> None:
+    """Regression: face scanning used to run only at startup, so uploads were never scanned."""
+    fake_model(mocker, inline=True)
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((10, 20, 30)), "image/jpeg"))])
+    with core.db() as con:
+        assert con.execute("SELECT COUNT(*) FROM faces WHERE path='alice/a.jpg'").fetchone()[0] == 1
+    assert faces.pending_count() == 0
+
+    client.put("/dav/alice/x.jpg", auth=ALICE, content=jpeg_bytes((40, 50, 60)))  # same for the drive
+    with core.db() as con:
+        assert con.execute("SELECT COUNT(*) FROM faces WHERE path='alice/x.jpg'").fetchone()[0] == 1
+
+
 def test_scan_faces_with_mocked_model(client: TestClient, mocker) -> None:
     client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((10, 20, 30)), "image/jpeg"))])
-
-    class FakeFace:
-        bbox = np.array([2.0, 2.0, 30.0, 30.0])
-        normed_embedding = np.ones(512, dtype=np.float32) / np.sqrt(512)
-
-    analyzer = mocker.MagicMock()
-    analyzer.get.return_value = [FakeFace()]
-    mocker.patch.object(faces, "FaceAnalysis", object())  # pretend the ML stack is installed
-    mocker.patch.object(faces, "_get_analyzer", return_value=analyzer)
+    analyzer = fake_model(mocker)
+    assert faces.pending_count() == 1
 
     faces.scan_faces()
     with core.db() as con:
@@ -456,4 +601,56 @@ def test_scan_faces_with_mocked_model(client: TestClient, mocker) -> None:
         assert con.execute("SELECT COUNT(*) FROM face_scan").fetchone()[0] == 1
 
     faces.scan_faces()  # unchanged photo → not scanned again
-    assert analyzer.get.call_count == 1
+    assert len(analyzer.embedded_on) == 1
+
+
+def test_embedding_uses_full_resolution_not_the_detection_copy(client: TestClient, mocker) -> None:
+    """The bug that made big photos unrecognisable: the crop must come from the original pixels."""
+    big = Image.effect_mandelbrot((4000, 3000), (-2.0, -1.5, 1.0, 1.5), 40).convert("RGB")
+    buf = io.BytesIO()
+    big.save(buf, "JPEG", quality=60)
+    (core.DATA / "alice/big.jpg").write_bytes(buf.getvalue())
+    core.index_file("alice/big.jpg")
+
+    analyzer = fake_model(mocker)
+    faces.scan_faces()
+
+    assert analyzer.detected_on == [(768, 1024)]  # detector saw a copy shrunk to DET_SIZE on the long side
+    assert analyzer.embedded_on == [(3000, 4000)]  # but the embedding came off the full-size image
+
+    with core.db() as con:
+        bbox = con.execute("SELECT bbox FROM faces WHERE path='alice/big.jpg'").fetchone()[0]
+    x1, y1, x2, y2 = (int(v) for v in bbox.split(","))
+    assert (x1, y1, x2, y2) == (8, 8, 227, 227)  # detector box scaled back to original coordinates
+
+
+def test_reuploading_the_same_bytes_is_skipped(client: TestClient) -> None:
+    same = jpeg_bytes((3, 4, 5))
+    r1 = client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", same, "image/jpeg"))])
+    r2 = client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", same, "image/jpeg"))])
+    assert r1.json()["count"] == 1
+    assert (r2.json()["count"], r2.json()["skipped"]) == (0, 1)
+    assert not (core.DATA / "alice/a-1.jpg").exists()
+    assert [p.name for p in (core.DATA / "alice").iterdir()] == ["a.jpg"]
+
+
+def test_same_name_different_picture_still_lands(client: TestClient) -> None:
+    client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", jpeg_bytes((1, 2, 3)), "image/jpeg"))])
+    r = client.post("/api/upload", auth=ALICE, files=[("files", ("a.jpg", mandel_jpeg(), "image/jpeg"))])
+    assert (r.json()["count"], r.json()["skipped"]) == (1, 0)
+    assert (core.DATA / "alice/a-1.jpg").exists()
+
+
+def test_dedupe_trashes_byte_identical_copies_per_owner(client: TestClient) -> None:
+    same = jpeg_bytes((7, 8, 9))
+    for name in ("holiday.jpg", "holiday-1.jpg"):  # WebDAV can still land two names with one content
+        (core.DATA / "alice" / name).write_bytes(same)
+    (core.DATA / "bob/theirs.jpg").write_bytes(same)
+    for rel in ("alice/holiday.jpg", "alice/holiday-1.jpg", "bob/theirs.jpg"):
+        core.index_file(rel)
+
+    assert core.dedupe() == 1
+    assert (core.DATA / "alice/holiday.jpg").exists()  # earliest upload wins; same second, so shortest name
+    assert not (core.DATA / "alice/holiday-1.jpg").exists()
+    assert (core.DATA / "bob/theirs.jpg").exists()  # another owner's copy is theirs to keep
+    assert core.dedupe() == 0
